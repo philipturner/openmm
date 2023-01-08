@@ -31,7 +31,7 @@
 using namespace OpenMM;
 using namespace std;
 
-OpenCLKernel::OpenCLKernel(OpenCLContext& context, cl::Kernel kernel) : context(context), kernel(kernel) {
+OpenCLKernel::OpenCLKernel(OpenCLContext& context, MTL::ComputePipelineState* kernel) : context(context), kernel(kernel) {
 }
 
 string OpenCLKernel::getName() const {
@@ -49,7 +49,7 @@ void OpenCLKernel::execute(int threads, int blockSize) {
     
     for (int i = 0; i < arrayArgs.size(); i++)
         if (arrayArgs[i] != NULL)
-            kernel.setArg<cl::Buffer>(i, arrayArgs[i]->getDeviceBuffer());
+            kernel.setArg<MTL::Buffer>(i, arrayArgs[i]->getDeviceBuffer());
     context.executeKernel(kernel, threads, blockSize);
 }
 

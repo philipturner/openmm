@@ -30,10 +30,12 @@
 using namespace OpenMM;
 using namespace std;
 
-OpenCLProgram::OpenCLProgram(OpenCLContext& context, cl::Program program) : context(context), program(program) {
+// TODO: Make sure you use NS::TransferPtr on other delegated initializers where
+// you did not.
+OpenCLProgram::OpenCLProgram(OpenCLContext& context, MTL::Library* program) : context(context), program(NS::TransferPtr(program)) {
 }
 
 ComputeKernel OpenCLProgram::createKernel(const string& name) {
-    cl::Kernel kernel = cl::Kernel(program, name.c_str());
+    auto kernel = MTL::ComputePipelineState(program, name.c_str());
     return shared_ptr<ComputeKernelImpl>(new OpenCLKernel(context, kernel));
 }

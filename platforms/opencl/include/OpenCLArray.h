@@ -73,7 +73,7 @@ public:
      * @param name              the name of the array
      */
     template <class T>
-    static OpenCLArray* create(OpenCLContext& context, cl::Buffer* buffer, size_t size, const std::string& name) {
+    static OpenCLArray* create(OpenCLContext& context, MTL::Buffer* buffer, size_t size, const std::string& name) {
         return new OpenCLArray(context, buffer, size, sizeof(T), name);
     }
     /**
@@ -100,7 +100,7 @@ public:
      * @param elementSize       the size of each element in bytes
      * @param name              the name of the array
      */
-    OpenCLArray(OpenCLContext& context, cl::Buffer* buffer, size_t size, int elementSize, const std::string& name);
+    OpenCLArray(OpenCLContext& context, MTL::Buffer* buffer, size_t size, int elementSize, const std::string& name);
     ~OpenCLArray();
     /**
      * Initialize this array.
@@ -130,7 +130,7 @@ public:
      * @param elementSize       the size of each element in bytes
      * @param name              the name of the array
      */
-    void initialize(OpenCLContext& context, cl::Buffer* buffer, size_t size, int elementSize, const std::string& name);
+    void initialize(OpenCLContext& context, MTL::Buffer* buffer, size_t size, int elementSize, const std::string& name);
     /**
      * Initialize this object.  The template argument is the data type of each array element.
      *
@@ -153,7 +153,7 @@ public:
      * @param name              the name of the array
      */
     template <class T>
-    void initialize(OpenCLContext& context, cl::Buffer* buffer, size_t size, const std::string& name) {
+    void initialize(OpenCLContext& context, MTL::Buffer* buffer, size_t size, const std::string& name) {
         initialize(context, buffer, size, sizeof(T), name);
     }
     /**
@@ -191,7 +191,7 @@ public:
     /**
      * Get the OpenCL Buffer object.
      */
-    cl::Buffer& getDeviceBuffer() {
+    MTL::Buffer* getDeviceBuffer() {
         return *buffer;
     }
     /**
@@ -241,7 +241,7 @@ public:
     void copyTo(ArrayInterface& dest) const;
 private:
     OpenCLContext* context;
-    cl::Buffer* buffer;
+    NS::SharedPtr<MTL::Buffer> buffer;
     size_t size;
     int elementSize;
     cl_int flags;

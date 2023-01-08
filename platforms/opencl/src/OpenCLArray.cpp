@@ -39,7 +39,7 @@ OpenCLArray::OpenCLArray(OpenCLContext& context, size_t size, int elementSize, c
     initialize(context, size, elementSize, name, flags);
 }
 
-OpenCLArray::OpenCLArray(OpenCLContext& context, cl::Buffer* buffer, size_t size, int elementSize, const std::string& name) : buffer(NULL) {
+OpenCLArray::OpenCLArray(OpenCLContext& context, MTL::Buffer* buffer, size_t size, int elementSize, const std::string& name) : buffer(NULL) {
     initialize(context, buffer, size, elementSize, name);
 }
 
@@ -62,7 +62,7 @@ void OpenCLArray::initialize(OpenCLContext& context, size_t size, int elementSiz
     this->flags = flags;
     ownsBuffer = true;
     try {
-        buffer = new cl::Buffer(context.getContext(), flags, size*elementSize);
+        buffer = NS::TransferPtr(MTL::Buffer(context.getContext(), flags, size*elementSize));
     }
     catch (cl::Error err) {
         std::stringstream str;
@@ -71,7 +71,7 @@ void OpenCLArray::initialize(OpenCLContext& context, size_t size, int elementSiz
     }
 }
 
-void OpenCLArray::initialize(OpenCLContext& context, cl::Buffer* buffer, size_t size, int elementSize, const std::string& name) {
+void OpenCLArray::initialize(OpenCLContext& context, MTL::Buffer* buffer, size_t size, int elementSize, const std::string& name) {
     if (this->buffer != NULL)
         throw OpenMMException("OpenCLArray has already been initialized");
     this->context = &context;

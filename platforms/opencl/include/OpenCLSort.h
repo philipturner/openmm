@@ -96,7 +96,7 @@ private:
     OpenCLArray offsetInBucket;
     OpenCLArray bucketOffset;
     OpenCLArray buckets;
-    cl::Kernel shortListKernel, shortList2Kernel, computeRangeKernel, assignElementsKernel, computeBucketPositionsKernel, copyToBucketsKernel, sortBucketsKernel;
+    NS::SharedPtr<MTL::ComputePipelineState> shortListKernel, shortList2Kernel, computeRangeKernel, assignElementsKernel, computeBucketPositionsKernel, copyToBucketsKernel, sortBucketsKernel;
     unsigned int dataLength, rangeKernelSize, positionsKernelSize, sortKernelSize;
     bool isShortList, useShortList2, uniform;
 };

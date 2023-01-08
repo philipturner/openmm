@@ -311,7 +311,7 @@ public:
      * @param optimizationFlags  the optimization flags to pass to the OpenCL compiler.  If this is
      *                           omitted, a default set of options will be used
      */
-    cl::Program createProgram(const std::string source, const char* optimizationFlags = NULL);
+    MTL::Library* createProgram(const std::string source, const char* optimizationFlags = NULL);
     /**
      * Create an OpenCL Program from source code.
      *
@@ -320,7 +320,7 @@ public:
      * @param optimizationFlags  the optimization flags to pass to the OpenCL compiler.  If this is
      *                           omitted, a default set of options will be used
      */
-    cl::Program createProgram(const std::string source, const std::map<std::string, std::string>& defines, const char* optimizationFlags = NULL);
+    MTL::Library* createProgram(const std::string source, const std::map<std::string, std::string>& defines, const char* optimizationFlags = NULL);
     /**
      * Execute a kernel.
      *
@@ -328,7 +328,7 @@ public:
      * @param workUnits    the maximum number of work units that should be used
      * @param blockSize    the size of each thread block to use
      */
-    void executeKernel(cl::Kernel& kernel, int workUnits, int blockSize = -1);
+    void executeKernel(MTL::ComputePipelineState* kernel, int workUnits, int blockSize = -1);
     /**
      * Compute the largest thread block size that can be used for a kernel that requires a particular amount of
      * shared memory per thread.
@@ -346,7 +346,7 @@ public:
      * @param memory     the Memory to clear
      * @param size       the size of the buffer in bytes
      */
-    void clearBuffer(cl::Memory& memory, int size);
+    void clearBuffer(MTL::Buffer* memory, int size);
     /**
      * Register a buffer that should be automatically cleared (all elements set to 0) at the start of each force or energy computation.
      */
@@ -357,7 +357,7 @@ public:
      * @param memory     the Memory to clear
      * @param size       the size of the buffer in bytes
      */
-    void addAutoclearBuffer(cl::Memory& memory, int size);
+    void addAutoclearBuffer(MTL::Buffer* memory, int size);
     /**
      * Clear all buffers that have been registered with addAutoclearBuffer().
      */
@@ -682,17 +682,17 @@ private:
     cl::Context context;
     cl::Device device;
     cl::CommandQueue defaultQueue, currentQueue;
-    cl::Kernel clearBufferKernel;
-    cl::Kernel clearTwoBuffersKernel;
-    cl::Kernel clearThreeBuffersKernel;
-    cl::Kernel clearFourBuffersKernel;
-    cl::Kernel clearFiveBuffersKernel;
-    cl::Kernel clearSixBuffersKernel;
-    cl::Kernel reduceReal4Kernel;
-    cl::Kernel reduceForcesKernel;
-    cl::Kernel reduceEnergyKernel;
-    cl::Kernel setChargesKernel;
-    cl::Buffer* pinnedBuffer;
+    NS::SharedPtr<MTL::ComputePipelineState> clearBufferKernel;
+    NS::SharedPtr<MTL::ComputePipelineState> clearTwoBuffersKernel;
+    NS::SharedPtr<MTL::ComputePipelineState> clearThreeBuffersKernel;
+    NS::SharedPtr<MTL::ComputePipelineState> clearFourBuffersKernel;
+    NS::SharedPtr<MTL::ComputePipelineState> clearFiveBuffersKernel;
+    NS::SharedPtr<MTL::ComputePipelineState> clearSixBuffersKernel;
+    NS::SharedPtr<MTL::ComputePipelineState> reduceReal4Kernel;
+    NS::SharedPtr<MTL::ComputePipelineState> reduceForcesKernel;
+    NS::SharedPtr<MTL::ComputePipelineState> reduceEnergyKernel;
+    NS::SharedPtr<MTL::ComputePipelineState> setChargesKernel;
+    NS::SharedPtr<MTL::Buffer> pinnedBuffer;
     void* pinnedMemory;
     OpenCLArray posq;
     OpenCLArray posqCorrection;
@@ -707,7 +707,7 @@ private:
     OpenCLArray chargeBuffer;
     std::vector<std::string> energyParamDerivNames;
     std::map<std::string, double> energyParamDerivWorkspace;
-    std::vector<cl::Memory*> autoclearBuffers;
+    std::vector<NS::SharedPtr<MTL::Buffer>> autoclearBuffers;
     std::vector<int> autoclearBufferSizes;
     OpenCLIntegrationUtilities* integration;
     OpenCLExpressionUtilities* expression;
