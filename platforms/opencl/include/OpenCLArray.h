@@ -34,6 +34,7 @@
 #include "openmm/common/windowsExportCommon.h"
 #include "openmm/common/ArrayInterface.h"
 #include "opencl.hpp"
+#include "Metal/Metal.hpp"
 #include <iostream>
 #include <sstream>
 #include <vector>
