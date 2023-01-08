@@ -86,14 +86,14 @@ public:
      */
     static int findLegalDimension(int minimum);
 private:
-    MTL::ComputePipelineState* createKernel(int xsize, int ysize, int zsize, int& threads, int axis, bool forward, bool inputIsReal);
+    OpenCLKernel createKernel(int xsize, int ysize, int zsize, int& threads, int axis, bool forward, bool inputIsReal);
     int xsize, ysize, zsize;
     int xthreads, ythreads, zthreads;
     bool packRealAsComplex;
     OpenCLContext& context;
-    NS::SharedPtr<MTL::ComputePipelineState> xkernel, ykernel, zkernel;
-    NS::SharedPtr<MTL::ComputePipelineState> invxkernel, invykernel, invzkernel;
-    NS::SharedPtr<MTL::ComputePipelineState> packForwardKernel, unpackForwardKernel, packBackwardKernel, unpackBackwardKernel;
+    OpenCLKernel xkernel, ykernel, zkernel;
+    OpenCLKernel invxkernel, invykernel, invzkernel;
+    OpenCLKernel packForwardKernel, unpackForwardKernel, packBackwardKernel, unpackBackwardKernel;
 };
 
 } // namespace OpenMM

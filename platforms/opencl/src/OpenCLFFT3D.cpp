@@ -97,12 +97,12 @@ OpenCLFFT3D::OpenCLFFT3D(OpenCLContext& context, int xsize, int ysize, int zsize
 }
 
 void OpenCLFFT3D::execFFT(OpenCLArray& in, OpenCLArray& out, bool forward) {
-    MTL::ComputePipelineState* kernel1 = (forward ? zkernel : invzkernel);
-    MTL::ComputePipelineState* kernel2 = (forward ? xkernel : invxkernel);
-    MTL::ComputePipelineState* kernel3 = (forward ? ykernel : invykernel);
+    OpenCLKernel* kernel1 = (forward ? &zkernel : &invzkernel);
+    OpenCLKernel* kernel2 = (forward ? &xkernel : &invxkernel);
+    OpenCLKernel* kernel3 = (forward ? &ykernel : &invykernel);
     if (packRealAsComplex) {
-        MTL::ComputePipelineState* packKernel = (forward ? packForwardKernel : packBackwardKernel);
-        MTL::ComputePipelineState* unpackKernel = (forward ? unpackForwardKernel : unpackBackwardKernel);
+        OpenCLKernel* packKernel = (forward ? &packForwardKernel : &packBackwardKernel);
+        OpenCLKernel* unpackKernel = (forward ? &unpackForwardKernel : &unpackBackwardKernel);
         int gridSize = xsize*ysize*zsize/2;
 
         // Pack the data into a half sized grid.
@@ -159,7 +159,7 @@ int OpenCLFFT3D::findLegalDimension(int minimum) {
     }
 }
 
-MTL::ComputePipelineState* OpenCLFFT3D::createKernel(int xsize, int ysize, int zsize, int& threads, int axis, bool forward, bool inputIsReal) {
+OpenCLKernel OpenCLFFT3D::createKernel(int xsize, int ysize, int zsize, int& threads, int axis, bool forward, bool inputIsReal) {
     int maxThreads = min(256, (int) context.getDevice().getInfo<CL_DEVICE_MAX_WORK_GROUP_SIZE>());
     while (maxThreads > 128 && maxThreads-64 >= zsize)
         maxThreads -= 64;
@@ -351,7 +351,7 @@ MTL::ComputePipelineState* OpenCLFFT3D::createKernel(int xsize, int ysize, int z
         replacements["INPUT_IS_PACKED"] = (inputIsReal && axis == 0 && !forward ? "1" : "0");
         replacements["OUTPUT_IS_PACKED"] = (outputIsPacked ? "1" : "0");
         auto program = NS::TransferPtr(context.createProgram(context.replaceStrings(OpenCLKernelSources::fft, replacements)));
-        MTL::ComputePipelineState* kernel(program, "execFFT");
+        OpenCLKernel kernel(program, "execFFT");
         threads = (isCPU ? 1 : blocksPerGroup*zsize);
         int kernelMaxThreads = kernel.getWorkGroupInfo<CL_KERNEL_WORK_GROUP_SIZE>(context.getDevice());
         if (threads > kernelMaxThreads) {

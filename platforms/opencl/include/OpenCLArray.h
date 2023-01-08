@@ -240,8 +240,8 @@ public:
      */
     void copyTo(ArrayInterface& dest) const;
 private:
-    OpenCLContext* context;
-    NS::SharedPtr<MTL::Buffer> buffer;
+    OpenCLContext& context;
+    MTL::Buffer* buffer;
     size_t size;
     int elementSize;
     cl_int flags;

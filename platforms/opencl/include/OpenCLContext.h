@@ -149,15 +149,10 @@ public:
      */
     void requestForceBuffers(int minBuffers);
     /**
-     * Get the cl::Context associated with this object.
-     */
-    cl::Context& getContext() {
-        return context;
-    }
     /**
      * Get the cl::Device associated with this object.
      */
-    cl::Device& getDevice() {
+    MTL::Device* getDevice() {
         return device;
     }
     /**
@@ -165,12 +160,6 @@ public:
      */
     int getDeviceIndex() {
         return deviceIndex;
-    }
-    /**
-     * Get the index of the cl::Platform associated with this object.
-     */
-    int getPlatformIndex() {
-        return platformIndex;
     }
     /**
      * Get the PlatformData object this context is part of.
@@ -192,18 +181,9 @@ public:
     int getContextIndex() const {
         return contextIndex;
     }
-    /**
-     * Get the cl::CommandQueue currently being used for execution.
-     */
-    cl::CommandQueue& getQueue();
-    /**
-     * Set the cl::ComandQueue to use for execution.
-     */
-    void setQueue(cl::CommandQueue& queue);
-    /**
-     * Reset the context to using the default queue for execution.
-     */
-    void restoreDefaultQueue();
+    
+    void setUsePmeQueue(bool usePmeQueue);
+    
     /**
      * Construct an uninitialized array of the appropriate class for this platform.  The returned
      * value should be created on the heap with the "new" operator.
@@ -311,7 +291,7 @@ public:
      * @param optimizationFlags  the optimization flags to pass to the OpenCL compiler.  If this is
      *                           omitted, a default set of options will be used
      */
-    MTL::Library* createProgram(const std::string source, const char* optimizationFlags = NULL);
+    MTL::Library* createProgram(const std::string source, MTL::CompileOptions* optimizationFlags = NULL);
     /**
      * Create an OpenCL Program from source code.
      *
@@ -320,7 +300,7 @@ public:
      * @param optimizationFlags  the optimization flags to pass to the OpenCL compiler.  If this is
      *                           omitted, a default set of options will be used
      */
-    MTL::Library* createProgram(const std::string source, const std::map<std::string, std::string>& defines, const char* optimizationFlags = NULL);
+    MTL::Library* createProgram(const std::string source, const std::map<std::string, std::string>& defines, MTL::CompileOptions* optimizationFlags = NULL);
     /**
      * Execute a kernel.
      *
@@ -328,7 +308,12 @@ public:
      * @param workUnits    the maximum number of work units that should be used
      * @param blockSize    the size of each thread block to use
      */
-    void executeKernel(MTL::ComputePipelineState* kernel, int workUnits, int blockSize = -1);
+    void executeKernel(OpenCLKernel kernel, int workUnits, int blockSize = -1);
+    
+    void executeMemcpy(OpenCLArray dst, OpenCLArray src, int len);
+    
+    void executeMemset(OpenCLArray dst, int pattern, int len);
+    
     /**
      * Compute the largest thread block size that can be used for a kernel that requires a particular amount of
      * shared memory per thread.
@@ -346,7 +331,7 @@ public:
      * @param memory     the Memory to clear
      * @param size       the size of the buffer in bytes
      */
-    void clearBuffer(MTL::Buffer* memory, int size);
+    void clearBuffer(OpenCLArray& array, int size);
     /**
      * Register a buffer that should be automatically cleared (all elements set to 0) at the start of each force or energy computation.
      */
@@ -357,7 +342,7 @@ public:
      * @param memory     the Memory to clear
      * @param size       the size of the buffer in bytes
      */
-    void addAutoclearBuffer(MTL::Buffer* memory, int size);
+    void addAutoclearBuffer(OpenCLArray& array, int size);
     /**
      * Clear all buffers that have been registered with addAutoclearBuffer().
      */
@@ -677,22 +662,28 @@ private:
     bool supports64BitGlobalAtomics, supportsDoublePrecision, useDoublePrecision, useMixedPrecision, boxIsTriclinic, hasAssignedPosqCharges;
     mm_float4 periodicBoxSize, invPeriodicBoxSize, periodicBoxVecX, periodicBoxVecY, periodicBoxVecZ;
     mm_double4 periodicBoxSizeDouble, invPeriodicBoxSizeDouble, periodicBoxVecXDouble, periodicBoxVecYDouble, periodicBoxVecZDouble;
-    std::string defaultOptimizationOptions;
+    MTL::CompileOptions* compileOptions;
     std::map<std::string, std::string> compilationDefines;
-    cl::Context context;
-    cl::Device device;
-    cl::CommandQueue defaultQueue, currentQueue;
-    NS::SharedPtr<MTL::ComputePipelineState> clearBufferKernel;
-    NS::SharedPtr<MTL::ComputePipelineState> clearTwoBuffersKernel;
-    NS::SharedPtr<MTL::ComputePipelineState> clearThreeBuffersKernel;
-    NS::SharedPtr<MTL::ComputePipelineState> clearFourBuffersKernel;
-    NS::SharedPtr<MTL::ComputePipelineState> clearFiveBuffersKernel;
-    NS::SharedPtr<MTL::ComputePipelineState> clearSixBuffersKernel;
-    NS::SharedPtr<MTL::ComputePipelineState> reduceReal4Kernel;
-    NS::SharedPtr<MTL::ComputePipelineState> reduceForcesKernel;
-    NS::SharedPtr<MTL::ComputePipelineState> reduceEnergyKernel;
-    NS::SharedPtr<MTL::ComputePipelineState> setChargesKernel;
-    NS::SharedPtr<MTL::Buffer> pinnedBuffer;
+    NS::SharedPtr<MTL::Device> device;
+    
+    NS::SharedPtr<MTL::CommandQueue> otherQueue, currentQueue;
+    MTL::CommandBuffer* defaultCommandBuffer, pmeCommandBuffer;
+    MTL::ComputeCommandEncoder* defaultEncoder, pmeEncoder;
+    int defaultBufferedCommands = 0, pmeBufferedCommands = 0;
+    int maxBufferedCommands = 10;
+    bool usePmeQueue = false;
+    
+    OpenCLKernel clearBufferKernel;
+    OpenCLKernel clearTwoBuffersKernel;
+    OpenCLKernel clearThreeBuffersKernel;
+    OpenCLKernel clearFourBuffersKernel;
+    OpenCLKernel clearFiveBuffersKernel;
+    OpenCLKernel clearSixBuffersKernel;
+    OpenCLKernel reduceReal4Kernel;
+    OpenCLKernel reduceForcesKernel;
+    OpenCLKernel reduceEnergyKernel;
+    OpenCLKernel setChargesKernel;
+    OpenCLArray pinnedBuffer;
     void* pinnedMemory;
     OpenCLArray posq;
     OpenCLArray posqCorrection;
@@ -707,7 +698,7 @@ private:
     OpenCLArray chargeBuffer;
     std::vector<std::string> energyParamDerivNames;
     std::map<std::string, double> energyParamDerivWorkspace;
-    std::vector<NS::SharedPtr<MTL::Buffer>> autoclearBuffers;
+    std::vector<OpenCLArray> autoclearBuffers;
     std::vector<int> autoclearBufferSizes;
     OpenCLIntegrationUtilities* integration;
     OpenCLExpressionUtilities* expression;

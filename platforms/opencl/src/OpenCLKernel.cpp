@@ -31,7 +31,8 @@
 using namespace OpenMM;
 using namespace std;
 
-OpenCLKernel::OpenCLKernel(OpenCLContext& context, MTL::ComputePipelineState* kernel) : context(context), kernel(kernel) {
+// TODO: - Implement this function.
+OpenCLKernel::OpenCLKernel(OpenCLContext& context, void* kernel) : context(context), kernel(kernel) {
 }
 
 string OpenCLKernel::getName() const {

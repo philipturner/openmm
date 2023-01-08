@@ -46,14 +46,14 @@
 using namespace OpenMM;
 using namespace std;
 
-static void setPeriodicBoxSizeArg(OpenCLContext& cl, MTL::ComputePipelineState* kernel, int index) {
+static void setPeriodicBoxSizeArg(OpenCLContext& cl, OpenCLKernel& kernel, int index) {
     if (cl.getUseDoublePrecision())
         kernel.setArg<mm_double4>(index, cl.getPeriodicBoxSizeDouble());
     else
         kernel.setArg<mm_float4>(index, cl.getPeriodicBoxSize());
 }
 
-static void setPeriodicBoxArgs(OpenCLContext& cl, MTL::ComputePipelineState* kernel, int index) {
+static void setPeriodicBoxArgs(OpenCLContext& cl, OpenCLKernel& kernel, int index) {
     if (cl.getUseDoublePrecision()) {
         kernel.setArg<mm_double4>(index++, cl.getPeriodicBoxSizeDouble());
         kernel.setArg<mm_double4>(index++, cl.getInvPeriodicBoxSizeDouble());
@@ -478,7 +478,7 @@ private:
 
 class OpenCLCalcNonbondedForceKernel::PmeIO : public CalcPmeReciprocalForceKernel::IO {
 public:
-    PmeIO(OpenCLContext& cl, MTL::ComputePipelineState* addForcesKernel) : cl(cl), addForcesKernel(addForcesKernel) {
+    PmeIO(OpenCLContext& cl, OpenCLKernel addForcesKernel) : cl(cl), addForcesKernel(addForcesKernel) {
         forceTemp.initialize<mm_float4>(cl, cl.getNumAtoms(), "PmeForce");
         addForcesKernel.setArg<MTL::Buffer>(0, forceTemp.getDeviceBuffer());
     }
@@ -495,7 +495,7 @@ private:
     OpenCLContext& cl;
     vector<mm_float4> posq;
     OpenCLArray forceTemp;
-    NS::SharedPtr<MTL::ComputePipelineState> addForcesKernel;
+    OpenCLKernel addForcesKernel;
 };
 
 class OpenCLCalcNonbondedForceKernel::PmePreComputation : public OpenCLContext::ForcePreComputation {
@@ -546,7 +546,7 @@ public:
     SyncQueuePostComputation(OpenCLContext& cl, cl::Event& event, OpenCLArray& pmeEnergyBuffer, int forceGroup) : cl(cl), event(event),
             pmeEnergyBuffer(pmeEnergyBuffer), forceGroup(forceGroup) {
     }
-    void setKernel(MTL::ComputePipelineState* kernel) {
+    void setKernel(OpenCLKernel kernel) {
         addEnergyKernel = kernel;
         addEnergyKernel.setArg<MTL::Buffer>(0, pmeEnergyBuffer.getDeviceBuffer());
         addEnergyKernel.setArg<MTL::Buffer>(1, cl.getEnergyBuffer().getDeviceBuffer());
@@ -566,7 +566,7 @@ public:
 private:
     OpenCLContext& cl;
     cl::Event& event;
-    NS::SharedPtr<MTL::ComputePipelineState> addEnergyKernel;
+    OpenCLKernel addEnergyKernel;
     OpenCLArray& pmeEnergyBuffer;
     int forceGroup;
 };

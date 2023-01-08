@@ -62,6 +62,7 @@ using namespace std;
 const int OpenCLContext::ThreadBlockSize = 64;
 const int OpenCLContext::TileSize = 32;
 
+// TODO: Use `MTLNewLibraryCompletionHandler`.
 static void CL_CALLBACK errorCallback(const char* errinfo, const void* private_info, size_t cb, void* user_data) {
     string skip = "OpenCL Build Warning : Compiler build log:";
     if (strncmp(errinfo, skip.c_str(), skip.length()) == 0)
@@ -665,7 +666,7 @@ OpenCLArray& OpenCLContext::unwrap(ArrayInterface& array) const {
     return *clarray;
 }
 
-void OpenCLContext::executeKernel(MTL::ComputePipelineState* kernel, int workUnits, int blockSize) {
+void OpenCLContext::executeKernel(OpenCLKernel kernel, int workUnits, int blockSize) {
     if (blockSize == -1)
         blockSize = ThreadBlockSize;
     int size = std::min((workUnits+blockSize-1)/blockSize, numThreadBlocks)*blockSize;

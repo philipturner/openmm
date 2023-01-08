@@ -289,7 +289,7 @@ public:
      * @param includeForces whether this kernel should compute forces
      * @param includeEnergy whether this kernel should compute potential energy
      */
-    MTL::ComputePipelineState* createInteractionKernel(const std::string& source, const std::vector<ParameterInfo>& params, const std::vector<ParameterInfo>& arguments, bool useExclusions, bool isSymmetric, int groups, bool includeForces, bool includeEnergy);
+    OpenCLKernel createInteractionKernel(const std::string& source, const std::vector<ParameterInfo>& params, const std::vector<ParameterInfo>& arguments, bool useExclusions, bool isSymmetric, int groups, bool includeForces, bool includeEnergy);
     /**
      * Create the set of kernels that will be needed for a particular combination of force groups.
      * 
@@ -321,7 +321,7 @@ private:
     OpenCLArray rebuildNeighborList;
     OpenCLSort* blockSorter;
     cl::Event downloadCountEvent;
-    NS::SharedPtr<MTL::Buffer> pinnedCountBuffer;
+    OpenCLArray pinnedCountBuffer;
     unsigned int* pinnedCountMemory;
     std::vector<std::vector<int> > atomExclusions;
     std::vector<ParameterInfo> parameters;
@@ -347,11 +347,11 @@ public:
     bool hasForces;
     double cutoffDistance;
     std::string source;
-    NS::SharedPtr<MTL::ComputePipelineState> forceKernel, energyKernel, forceEnergyKernel;
-    NS::SharedPtr<MTL::ComputePipelineState> findBlockBoundsKernel;
-    NS::SharedPtr<MTL::ComputePipelineState> sortBoxDataKernel;
-    NS::SharedPtr<MTL::ComputePipelineState> findInteractingBlocksKernel;
-    NS::SharedPtr<MTL::ComputePipelineState> findInteractionsWithinBlocksKernel;
+    OpenCLKernel forceKernel, energyKernel, forceEnergyKernel;
+    OpenCLKernel findBlockBoundsKernel;
+    OpenCLKernel sortBoxDataKernel;
+    OpenCLKernel findInteractingBlocksKernel;
+    OpenCLKernel findInteractionsWithinBlocksKernel;
 };
 
 /**
@@ -406,7 +406,7 @@ private:
     std::string componentType;
     std::string type;
     int size, numComponents;
-    NS::SharedPtr<MTL::Buffer> memory;
+    OpenCLArray memory;
     bool constant;
 };
 

@@ -142,7 +142,7 @@ public:
 private:
     std::string createForceSource(int forceIndex, int numBonds, int numAtoms, int group, const std::string& computeForce);
     OpenCLContext& context;
-    NS::SharedPtr<MTL::ComputePipelineState> kernel;
+    OpenCLKernel kernel;
     std::vector<std::vector<std::vector<int> > > forceAtoms;
     std::vector<int> indexWidth;
     std::vector<std::string> forceSource;

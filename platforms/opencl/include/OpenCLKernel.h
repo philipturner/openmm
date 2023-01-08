@@ -46,7 +46,7 @@ public:
      * @param context      the context this kernel belongs to
      * @param kernel       the kernel to be invoked
      */
-    OpenCLKernel(OpenCLContext& context, MTL::ComputePipelineState* kernel);
+    OpenCLKernel(OpenCLContext& context, OpenCLProgram& program, const std::string& name);
     /**
      * Get the name of this kernel.
      */

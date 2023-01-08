@@ -295,9 +295,10 @@ void OpenCLNonbondedUtilities::initialize(const System& system) {
     }
 }
 
-static void setPeriodicBoxArgs(OpenCLContext& cl, MTL::ComputePipelineState* kernel, int index) {
+// TODO: Pointer or reference?
+static void setPeriodicBoxArgs(OpenCLContext& cl, OpenCLKernel& kernel, int index) {
     if (cl.getUseDoublePrecision()) {
-        kernel.setArg<mm_double4>(index++, cl.getPeriodicBoxSizeDouble());
+        kernel->setArg<mm_double4>(index++, cl.getPeriodicBoxSizeDouble());
         kernel.setArg<mm_double4>(index++, cl.getInvPeriodicBoxSizeDouble());
         kernel.setArg<mm_double4>(index++, cl.getPeriodicBoxVecXDouble());
         kernel.setArg<mm_double4>(index++, cl.getPeriodicBoxVecYDouble());
@@ -362,7 +363,7 @@ void OpenCLNonbondedUtilities::computeInteractions(int forceGroups, bool include
         return;
     KernelSet& kernels = groupKernels[forceGroups];
     if (kernels.hasForces) {
-        MTL::ComputePipelineState* kernel = (includeForces ? (includeEnergy ? kernels.forceEnergyKernel : kernels.forceKernel) : kernels.energyKernel);
+        OpenCLKernel* kernel = (includeForces ? (includeEnergy ? &kernels.forceEnergyKernel : &kernels.forceKernel) : &kernels.energyKernel);
         if (*reinterpret_cast<cl_kernel*>(&kernel) == NULL)
             kernel = createInteractionKernel(kernels.source, parameters, arguments, true, true, forceGroups, includeForces, includeEnergy);
         if (useCutoff)
@@ -539,7 +540,7 @@ void OpenCLNonbondedUtilities::createKernelsForGroups(int groups) {
     groupKernels[groups] = kernels;
 }
 
-MTL::ComputePipelineState* OpenCLNonbondedUtilities::createInteractionKernel(const string& source, const vector<ParameterInfo>& params, const vector<ParameterInfo>& arguments, bool useExclusions, bool isSymmetric, int groups, bool includeForces, bool includeEnergy) {
+OpenCLKernel OpenCLNonbondedUtilities::createInteractionKernel(const string& source, const vector<ParameterInfo>& params, const vector<ParameterInfo>& arguments, bool useExclusions, bool isSymmetric, int groups, bool includeForces, bool includeEnergy) {
     map<string, string> replacements;
     replacements["COMPUTE_INTERACTION"] = source;
     const string suffixes[] = {"x", "y", "z", "w"};
