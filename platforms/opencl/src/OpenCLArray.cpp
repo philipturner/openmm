@@ -35,7 +35,7 @@ using namespace OpenMM;
 OpenCLArray::OpenCLArray() : buffer(NULL), ownsBuffer(false) {
 }
 
-OpenCLArray::OpenCLArray(OpenCLContext& context, size_t size, int elementSize, const std::string& name, cl_int flags) : buffer(NULL) {
+OpenCLArray::OpenCLArray(OpenCLContext& context, size_t size, int elementSize, const std::string& name, MTL::ResourceOptions flags) : buffer(NULL) {
     initialize(context, size, elementSize, name, flags);
 }
 
@@ -45,14 +45,14 @@ OpenCLArray::OpenCLArray(OpenCLContext& context, MTL::Buffer* buffer, size_t siz
 
 OpenCLArray::~OpenCLArray() {
     if (buffer != NULL && ownsBuffer)
-        delete buffer;
+        buffer->release();
 }
 
 void OpenCLArray::initialize(ComputeContext& context, size_t size, int elementSize, const std::string& name) {
-    initialize(dynamic_cast<OpenCLContext&>(context), size, elementSize, name, CL_MEM_READ_WRITE);
+    initialize(dynamic_cast<OpenCLContext&>(context), size, elementSize, name, MTL::ResourceStorageModePrivate);
 }
 
-void OpenCLArray::initialize(OpenCLContext& context, size_t size, int elementSize, const std::string& name, cl_int flags) {
+void OpenCLArray::initialize(OpenCLContext& context, size_t size, int elementSize, const std::string& name, MTL::ResourceOptions flags) {
     if (buffer != NULL)
         throw OpenMMException("OpenCLArray has already been initialized");
     this->context = &context;
@@ -62,7 +62,8 @@ void OpenCLArray::initialize(OpenCLContext& context, size_t size, int elementSiz
     this->flags = flags;
     ownsBuffer = true;
     try {
-        buffer = NS::TransferPtr(MTL::Buffer(context.getContext(), flags, size*elementSize));
+        MTL::Device* device = context->getDevice();
+        buffer = device->makeBuffer(size * elementSize, flags);
     }
     catch (cl::Error err) {
         std::stringstream str;
@@ -87,7 +88,7 @@ void OpenCLArray::resize(size_t size) {
         throw OpenMMException("OpenCLArray has not been initialized");
     if (!ownsBuffer)
         throw OpenMMException("Cannot resize an array that does not own its storage");
-    delete buffer;
+    buffer->release();
     buffer = NULL;
     initialize(*context, size, elementSize, name, flags);
 }
@@ -102,7 +103,19 @@ void OpenCLArray::uploadSubArray(const void* data, int offset, int elements, boo
     if (offset < 0 || offset+elements > getSize())
         throw OpenMMException("uploadSubArray: data exceeds range of array");
     try {
-        context->getQueue().enqueueWriteBuffer(*buffer, blocking ? CL_TRUE : CL_FALSE, offset*elementSize, elements*elementSize, data);
+        int64_t actual_offset = offset * elementSize;
+        int64_t actual_elements = elements * elementSize
+        int64_t temp_offset;
+        auto temp_buffer = NS::TransferPtr(context->newTemporaryBuffer(
+           ((const char*)data) + actual_offset, actual_elements, &temp_offset));
+        
+        MTL::BlitCommandEncoder* encoder = context->nextBlitEncoder();
+        encoder->copyFromBuffer(
+            temp_buffer.get(), temp_offset, buffer, actual_offset,
+            actual_elements);
+        if (blocking) {
+            context->maybeFlushCommands(true, true);
+        }
     }
     catch (cl::Error err) {
         std::stringstream str;
@@ -115,7 +128,19 @@ void OpenCLArray::download(void* data, bool blocking) const {
     if (buffer == NULL)
         throw OpenMMException("OpenCLArray has not been initialized");
     try {
-        context->getQueue().enqueueReadBuffer(*buffer, blocking ? CL_TRUE : CL_FALSE, 0, size*elementSize, data);
+        int64_t actual_offset = 0;
+        int64_t actual_elements = size * elementSize;
+        int64_t temp_offset;
+        auto temp_buffer = NS::TransferPtr(context->newTemporaryBuffer(
+           ((const char*)data) + actual_offset, actual_elements, &temp_offset));
+        
+        MTL::BlitCommandEncoder* encoder = context->nextBlitEncoder();
+        encoder->copyFromBuffer(
+            buffer, actual_offset, temp_buffer.get(), temp_offset,
+            actual_elements);
+        if (blocking) {
+            context->maybeFlushCommands(true, true);
+        }
     }
     catch (cl::Error err) {
         std::stringstream str;
@@ -131,7 +156,13 @@ void OpenCLArray::copyTo(ArrayInterface& dest) const {
         throw OpenMMException("Error copying array "+name+" to "+dest.getName()+": The destination array does not match the size of the array");
     OpenCLArray& clDest = context->unwrap(dest);
     try {
-        context->getQueue().enqueueCopyBuffer(*buffer, clDest.getDeviceBuffer(), 0, 0, size*elementSize);
+        int64_t actual_offset = 0;
+        int64_t actual_elements = size * elementSize;
+        
+        MTL::BlitCommandEncoder* encoder = context->nextBlitEncoder();
+        encoder->copyFromBuffer(
+            buffer, actual_offset, clDest->buffer, actual_offset,
+            actual_elements);
     }
     catch (cl::Error err) {
         std::stringstream str;

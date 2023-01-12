@@ -60,7 +60,7 @@ public:
      * @param flags             the set of flags to specify when creating the OpenCL Buffer
      */
     template <class T>
-    static OpenCLArray* create(OpenCLContext& context, size_t size, const std::string& name, cl_int flags = CL_MEM_READ_WRITE) {
+    static OpenCLArray* create(OpenCLContext& context, size_t size, const std::string& name, MTL::ResourceOptions flags = MTL::ResourceStorageModePrivate) {
         return new OpenCLArray(context, size, sizeof(T), name, flags);
     }
     /**
@@ -90,7 +90,7 @@ public:
      * @param name              the name of the array
      * @param flags             the set of flags to specify when creating the OpenCL Buffer
      */
-    OpenCLArray(OpenCLContext& context, size_t size, int elementSize, const std::string& name, cl_int flags = CL_MEM_READ_WRITE);
+    OpenCLArray(OpenCLContext& context, size_t size, int elementSize, const std::string& name, MTL::ResourceOptions flags = MTL::ResourceStorageModePrivate);
     /**
      * Create an OpenCLArray object that uses a preexisting Buffer.
      *
@@ -120,7 +120,7 @@ public:
      * @param name              the name of the array
      * @param flags             the set of flags to specify when creating the OpenCL Buffer
      */
-    void initialize(OpenCLContext& context, size_t size, int elementSize, const std::string& name, cl_int flags);
+    void initialize(OpenCLContext& context, size_t size, int elementSize, const std::string& name, MTL::ResourceOptions flags);
     /**
      * Initialize this object to use a preexisting Buffer.
      *
@@ -140,7 +140,7 @@ public:
      * @param flags             the set of flags to specify when creating the OpenCL Buffer
      */
     template <class T>
-    void initialize(OpenCLContext& context, size_t size, const std::string& name, cl_int flags = CL_MEM_READ_WRITE) {
+    void initialize(OpenCLContext& context, size_t size, const std::string& name, MTL::ResourceOptions flags = MTL::ResourceStorageModePrivate) {
         initialize(context, size, sizeof(T), name, flags);
     }
     /**
@@ -240,11 +240,11 @@ public:
      */
     void copyTo(ArrayInterface& dest) const;
 private:
-    OpenCLContext& context;
+    OpenCLContext* context;
     MTL::Buffer* buffer;
     size_t size;
     int elementSize;
-    cl_int flags;
+    MTL::ResourceOptions flags;
     bool ownsBuffer;
     std::string name;
 };

@@ -563,6 +563,80 @@ void OpenCLContext::requestForceBuffers(int minBuffers) {
     numForceBuffers = std::max(numForceBuffers, minBuffers);
 }
 
+void OpenCLContext::maybeFlushCommands(bool forceFlush, bool waitOnFlush) {
+    // forceFlush works even if no commands are buffered.
+    if (forceFlush || (numBufferedCommands >= maxBufferedCommands)) {
+        if (computeEncoder) {
+            computeEncoder->endEncoding();
+            computeEncoder = nullptr;
+            if (blitEncoder)
+                throw OpenMMException("Unexpected blit encoder.");
+        } else if (blitEncoder) {
+            blitEncoder->endEncoding();
+            blitEncoder = nullptr;
+            if (computeEncoder)
+                throw OpenMMException("Unexpected compute encoder.");
+        }
+        commandBuffer->commit();
+        if (waitOnFlush) {
+            commandBuffer->waitUntilCompleted();
+        }
+        commandPool->drain();
+        numBufferedCommands = 0;
+        commandPool = NS::AutoreleasePool::alloc()->init();
+        commandBuffer = commandQueue->commandBuffer();
+    }
+}
+
+MTL::ComputeCommandEncoder* OpenCLContext::nextComputeCommand() {
+    maybeFlushCommands();
+    if (blitEncoder) {
+        blitEncoder->endEncoding();
+        blitEncoder = nullptr;
+        if (computeEncoder)
+            throw OpenMMException("Unexpected compute encoder.");
+    }
+    if (!computeEncoder) {
+        computeEncoder = commandBuffer->computeCommandEncoder();
+    }
+    numBufferedCommands += 1;
+    return computeEncoder;
+}
+
+MTL::ComputeCommandEncoder* OpenCLContext::nextBlitCommand() {
+    maybeFlushCommands();
+    if (computeEncoder) {
+        computeEncoder->endEncoding();
+        computeEncoder = nullptr;
+        if (blitEncoder)
+            throw OpenMMException("Unexpected blit encoder.");
+    }
+    if (!blitEncoder) {
+        blitEncoder = commandBuffer->blitCommandEncoder();
+    }
+    numBufferedCommands += 1;
+    return blitEncoder;
+}
+
+dispatch_semaphore_t OpenCLContext::createSemaphoreAndFlush() {
+    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+    commandBuffer->addCompletedHandler(^void(MTL::CommandBuffer* commandBuffer) {
+        dispatch_semaphore_signal(semaphore);
+    });
+    maybeFlushCommands(true);
+    return semaphore;
+}
+
+MTL::Buffer* OpenCLContext::newTemporaryBuffer(void *ptr, int64_t size, int64_t* offset) {
+    auto address = (uintptr_t)ptr;
+    auto rounded_address = address & uintptr_t(vm_page_size - 1);
+    *offset = address - rounded_address;
+    auto rounded_size = (address - rounded_address) + size;
+    auto rounded_ptr = (void*)rounded_address;
+    return device->newBuffer(
+        rounded_ptr, rounded_size, MTL::ResourceStorageModeShared, NULL);
+}
+
 MTL::Library* OpenCLContext::createProgram(const string source, const char* optimizationFlags) {
     return createProgram(source, map<string, string>(), optimizationFlags);
 }

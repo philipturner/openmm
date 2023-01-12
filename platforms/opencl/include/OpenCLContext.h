@@ -155,6 +155,17 @@ public:
     MTL::Device* getDevice() {
         return device;
     }
+    
+    // You must call `newCompute/BlitCommand` before starting each command.
+    // Otherwise, you will mess with the automatic tracking of command buffer
+    // size.
+    void maybeFlushCommands(bool forceFlush = false, bool waitOnFlush = false);
+    MTL::ComputeCommandEncoder* nextComputeCommand();
+    MTL::BlitCommandEncoder* nextBlitCommand();
+    
+    // An OpenCLEvent must wait+release any un-waited semaphore on deallocation.
+    dispatch_semaphore_t createSemaphoreAndFlush();
+    MTL::Buffer* newTemporaryBuffer(void *ptr, int64_t size, int64_t* offset);
     /**
      * Get the index of the cl::Device associated with this object.
      */
@@ -181,8 +192,6 @@ public:
     int getContextIndex() const {
         return contextIndex;
     }
-    
-    void setUsePmeQueue(bool usePmeQueue);
     
     /**
      * Construct an uninitialized array of the appropriate class for this platform.  The returned
@@ -428,6 +437,7 @@ public:
     /**
      * Get the number of blocks of TileSize atoms.
      */
+     */
     int getNumAtomBlocks() const {
         return numAtomBlocks;
     }
@@ -665,14 +675,17 @@ private:
     MTL::CompileOptions* compileOptions;
     std::map<std::string, std::string> compilationDefines;
     NS::SharedPtr<MTL::Device> device;
-    
     NS::SharedPtr<MTL::CommandQueue> queue;
+    NS::SharedPtr<MTL::SharedEvent> syncEvent;
+    NS::AutoreleasePool* commandPool;
+    // TODO: Initialize the first commandPool/commandBuffer when creating the
+    // OpenCLContext. A different pool (not `commndPool`) should handle
+    // temporary objects when creating kernels.
     MTL::CommandBuffer* commandBuffer;
-    MTL::ComputeCommandEncoder* defaultEncoder, pmeEncoder;
-    int defaultBufferedCommands = 0, pmeBufferedCommands = 0;
+    MTL::ComputeCommandEncoder* computeEncoder;
+    MTL::BlitCommandEncoder* blitEncoder;
+    int numBufferedCommands = 0;
     int maxBufferedCommands = 10;
-    bool usePmeQueue = false;
-    
     OpenCLKernel clearBufferKernel;
     OpenCLKernel clearTwoBuffersKernel;
     OpenCLKernel clearThreeBuffersKernel;
