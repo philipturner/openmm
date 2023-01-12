@@ -8,37 +8,32 @@
 #pragma OPENCL EXTENSION cl_khr_int64_base_atomics : enable
 #else
 __attribute__((overloadable)) unsigned long atom_add(volatile __global unsigned long* p, unsigned long val) {
-    volatile __global unsigned int* word = (volatile __global unsigned int*) p;
-#ifdef __ENDIAN_LITTLE__
-    int lowIndex = 0;
-#else
-    int lowIndex = 1;
-#endif
-    unsigned int lower = val;
-    unsigned int upper = val >> 32;
-    unsigned int result = atomic_add(&word[lowIndex], lower);
-    int carry = (lower + (unsigned long) result >= 0x100000000 ? 1 : 0);
+    device atomic_uint* word = (device atomic_uint*) p;
+    unsigned int lower = as_type<uint2>(val)[0];
+    unsigned int upper = as_type<uint2>(val)[1];
+    unsigned int previous = atomic_fetch_add_explicit(word + 0, lower, memory_order_relaxed);
+    int carry = (lower + previous < lower) ? 1 : 0;
     upper += carry;
     if (upper != 0)
-        atomic_add(&word[1-lowIndex], upper);
+        atomic_fetch_add_explicit(word + 1, upper, memory_order_relaxed);
     return 0;
 }
 #endif
 
-#define KERNEL __kernel
+#define KERNEL kernel
 #define DEVICE
-#define LOCAL __local
-#define LOCAL_ARG __local
-#define GLOBAL __global
-#define RESTRICT restrict
-#define LOCAL_ID get_local_id(0)
-#define LOCAL_SIZE get_local_size(0)
-#define GLOBAL_ID get_global_id(0)
-#define GLOBAL_SIZE get_global_size(0)
-#define GROUP_ID get_group_id(0)
-#define NUM_GROUPS get_num_groups(0)
-#define SYNC_THREADS barrier(CLK_LOCAL_MEM_FENCE+CLK_GLOBAL_MEM_FENCE);
-#define MEM_FENCE mem_fence(CLK_LOCAL_MEM_FENCE+CLK_GLOBAL_MEM_FENCE);
+#define LOCAL threadgroup
+#define LOCAL_ARG threadgroup
+#define GLOBAL device
+#define RESTRICT
+#define LOCAL_ID thread_position_in_threadgroup
+#define LOCAL_SIZE threads_per_threadgroup
+#define GLOBAL_ID thread_position_in_grid
+#define GLOBAL_SIZE threads_per_grid
+#define GROUP_ID threadgroup_position_in_grid
+#define NUM_GROUPS threadgroups_per_grid
+#define SYNC_THREADS threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
+#define MEM_FENCE threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
 #define ATOMIC_ADD(dest, value) atom_add(dest, value)
 
 typedef long mm_long;

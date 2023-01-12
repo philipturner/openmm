@@ -109,7 +109,7 @@ void OpenCLArray::uploadSubArray(const void* data, int offset, int elements, boo
         auto temp_buffer = NS::TransferPtr(context->newTemporaryBuffer(
            ((const char*)data) + actual_offset, actual_elements, &temp_offset));
         
-        MTL::BlitCommandEncoder* encoder = context->nextBlitEncoder();
+        MTL::BlitCommandEncoder* encoder = context->nextBlitCommand();
         encoder->copyFromBuffer(
             temp_buffer.get(), temp_offset, buffer, actual_offset,
             actual_elements);
@@ -134,7 +134,7 @@ void OpenCLArray::download(void* data, bool blocking) const {
         auto temp_buffer = NS::TransferPtr(context->newTemporaryBuffer(
            ((const char*)data) + actual_offset, actual_elements, &temp_offset));
         
-        MTL::BlitCommandEncoder* encoder = context->nextBlitEncoder();
+        MTL::BlitCommandEncoder* encoder = context->nextBlitCommand();
         encoder->copyFromBuffer(
             buffer, actual_offset, temp_buffer.get(), temp_offset,
             actual_elements);
@@ -159,7 +159,7 @@ void OpenCLArray::copyTo(ArrayInterface& dest) const {
         int64_t actual_offset = 0;
         int64_t actual_elements = size * elementSize;
         
-        MTL::BlitCommandEncoder* encoder = context->nextBlitEncoder();
+        MTL::BlitCommandEncoder* encoder = context->nextBlitCommand();
         encoder->copyFromBuffer(
             buffer, actual_offset, clDest->buffer, actual_offset,
             actual_elements);

@@ -30,12 +30,34 @@
 using namespace OpenMM;
 using namespace std;
 
-// TODO: Make sure you use NS::TransferPtr on other delegated initializers where
-// you did not.
-OpenCLProgram::OpenCLProgram(OpenCLContext& context, MTL::Library* program) : context(context), program(NS::TransferPtr(program)) {
+OpenCLProgram::OpenCLProgram(OpenCLContext& context, MTL::Library* program) : context(context) {
+    this->program = NS::TransferPtr(program);
 }
 
 ComputeKernel OpenCLProgram::createKernel(const string& name) {
-    auto kernel = MTL::ComputePipelineState(program, name.c_str());
-    return shared_ptr<ComputeKernelImpl>(new OpenCLKernel(context, kernel));
+    NS::Error* error;
+    auto ns_name = NS::String::string(name.c_str(), NS::UTF8StringEncoding);
+    auto function = NS::TransferPtr(program->newFunction(ns_name, &error));
+    if (error) {
+        const char* error_description =
+            error->localizedDescription()->cString(NS::UTF8StringEncoding);
+        throw OpenMMException(
+            "Error creating function: " + std::string(error_description));
+    }
+    
+    // Set function name here, so we can recall it later.
+    auto desc = NS::TransferPtr(
+        MTL::ComputePipelineDescriptor::alloc()->init());
+    desc->setLabel(ns_name);
+    desc->setComputeFunction(function.get())
+    
+    MTL::ComputePipelineState* pipeline =
+        device->newComputePipelineState(desc.get(), 0, &error);
+    if (error) {
+        const char* error_description =
+            error->localizedDescription()->cString(NS::UTF8StringEncoding);
+        throw OpenMMException(
+            "Error creating pipeline: " + std::string(error_description));
+    }
+    return shared_ptr<ComputeKernelImpl>(new OpenCLKernel(context, pipeline));
 }

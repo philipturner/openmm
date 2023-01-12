@@ -637,15 +637,67 @@ MTL::Buffer* OpenCLContext::newTemporaryBuffer(void *ptr, int64_t size, int64_t*
         rounded_ptr, rounded_size, MTL::ResourceStorageModeShared, NULL);
 }
 
-MTL::Library* OpenCLContext::createProgram(const string source, const char* optimizationFlags) {
+MTL::Library* OpenCLContext::createProgram(const string source, MTL::CompileOptions* optimizationFlags) {
     return createProgram(source, map<string, string>(), optimizationFlags);
 }
 
-MTL::Library* OpenCLContext::createProgram(const string source, const map<string, string>& defines, const char* optimizationFlags) {
-    string options = (optimizationFlags == NULL ? defaultOptimizationOptions : string(optimizationFlags));
+MTL::Library* OpenCLContext::createProgram(const string source, const map<string, string>& defines, MTL::CompileOptions* optimizationFlags) {
+    MTL::CompileOptions options = (optimizationFlags == NULL)
+        ? defaultOptimizationOptions : optimizationFlags;
     stringstream src;
-    if (!options.empty())
-        src << "// Compilation Options: " << options << endl << endl;
+    src << "// Compilation Options: ";
+    if (options->fastMathEnabled())
+        src << "-ffast-math" << " ";
+    if (options->preserveInvariance())
+        src << "-fpreserve-invariance" << " ";
+    MTL::LanguageVersion version = options->languageVersion();
+    NSUInteger versionMajor = version >> 16;
+    NSUInteger versionMinor = version - (versionMajor << 16);
+    src << "-std=metal" << std::to_string(versionMajor) << "." << std::to_string(versionMinor) << " ";
+    
+    NS::Dictionary* macros = options->preprocessorMacros();
+    NS::Enumerator* macros_enumerator = macros->keyEnumerator();
+    while (true) {
+        NS::String* key = macros_enumerator->nextObject();
+        if (!key) {
+            break;
+        }
+        NS::String* value = macros->object(key);
+        const char* key_description =
+            key->description()->cString(NS::UTF8StringEncoding);
+        const char* value_description =
+            object->description()->cString(NS::UTF8StringEncoding);
+        src << "-D" << std::string(key_description);
+        src << "=" << std::string(value_description) << " ";
+    }
+    switch (options->optimizationLevel()) {
+        case MTL::LibraryOptimizationLevelDefault: {
+            src << "-O2" << " ";
+            break;
+        }
+        case MTL::LibraryOptimizationLevelSize: {
+            src << "-Os" << " ";
+            break;
+        }
+    }
+    
+    NS::Array* libraries = options->libraries();
+    for (NS::UInteger i = 0; i < libraries->count(); ++i) {
+        MTL::DynamicLibrary* value = libraries->object(i);
+        NS::String* name = value->installName();
+        const char* name_description =
+            name->description()->cString(NS::UTF8StringEncoding);
+        src << "-l" << std::string(name_description) << " ";
+    }
+    if (options->libraryType() == MTL::LibraryTypeDynamic) {
+        src << "-dynamiclib" << " ";
+        NS::String* name = options->installName();
+        const char* name_description =
+            name->description()->cString(NS::UTF8StringEncoding);
+        src << "-install_name=" << std::string(name_description) << " ";
+    }
+    
+    src << endl << endl;
     for (auto& pair : compilationDefines) {
         // Query defines to avoid duplicate variables
         if (defines.find(pair.first) == defines.end()) {
@@ -693,26 +745,19 @@ MTL::Library* OpenCLContext::createProgram(const string source, const map<string
     if (!defines.empty())
         src << endl;
     src << source << endl;
-    MTL::Library::Sources sources({src.str()});
-    MTL::Library* program(context, sources);
-    try {
-        program.build(vector<cl::Device>(1, device), options.c_str());
-    } catch (cl::Error err) {
-        throw OpenMMException("Error compiling kernel: "+program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(device));
+    
+    // We need an encapsulating autoreleasepool because the string and error are
+    // autoreleased. The caller should ensure an autoreleasepool is active.
+    NS::Error* error;
+    auto sources = NS::String::string(sources.c_str(), NS::UTF8StringEncoding);
+    MTL::Library* program = device->newLibrary(sources, options, &error);
+    if (error) {
+        const char* error_description =
+            error->localizedDescription()->cString(NS::UTF8StringEncoding);
+        throw OpenMMException(
+            "Error compiling kernel: " + std::string(error_description));
     }
     return program;
-}
-
-cl::CommandQueue& OpenCLContext::getQueue() {
-    return currentQueue;
-}
-
-void OpenCLContext::setQueue(cl::CommandQueue& queue) {
-    currentQueue = queue;
-}
-
-void OpenCLContext::restoreDefaultQueue() {
-    currentQueue = defaultQueue;
 }
 
 OpenCLArray* OpenCLContext::createArray() {

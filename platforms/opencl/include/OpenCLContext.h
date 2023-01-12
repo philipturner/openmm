@@ -672,7 +672,7 @@ private:
     bool supports64BitGlobalAtomics, supportsDoublePrecision, useDoublePrecision, useMixedPrecision, boxIsTriclinic, hasAssignedPosqCharges;
     mm_float4 periodicBoxSize, invPeriodicBoxSize, periodicBoxVecX, periodicBoxVecY, periodicBoxVecZ;
     mm_double4 periodicBoxSizeDouble, invPeriodicBoxSizeDouble, periodicBoxVecXDouble, periodicBoxVecYDouble, periodicBoxVecZDouble;
-    MTL::CompileOptions* compileOptions;
+    NS::SharedPtr<MTL::CompileOptions> defaultOptimizationOptions;
     std::map<std::string, std::string> compilationDefines;
     NS::SharedPtr<MTL::Device> device;
     NS::SharedPtr<MTL::CommandQueue> queue;
@@ -683,6 +683,8 @@ private:
     // temporary objects when creating kernels.
     MTL::CommandBuffer* commandBuffer;
     MTL::ComputeCommandEncoder* computeEncoder;
+    // TODO: Maybe implement a compute version of the blit encoder on M1, if
+    // encoding overhead is problematic.
     MTL::BlitCommandEncoder* blitEncoder;
     int numBufferedCommands = 0;
     int maxBufferedCommands = 10;

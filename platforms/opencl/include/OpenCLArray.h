@@ -192,7 +192,7 @@ public:
      * Get the OpenCL Buffer object.
      */
     MTL::Buffer* getDeviceBuffer() {
-        return *buffer;
+        return buffer;
     }
     /**
      * Copy the values in a vector to the Buffer.
