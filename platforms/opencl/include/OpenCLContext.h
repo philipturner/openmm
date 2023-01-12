@@ -666,8 +666,8 @@ private:
     std::map<std::string, std::string> compilationDefines;
     NS::SharedPtr<MTL::Device> device;
     
-    NS::SharedPtr<MTL::CommandQueue> otherQueue, currentQueue;
-    MTL::CommandBuffer* defaultCommandBuffer, pmeCommandBuffer;
+    NS::SharedPtr<MTL::CommandQueue> queue;
+    MTL::CommandBuffer* commandBuffer;
     MTL::ComputeCommandEncoder* defaultEncoder, pmeEncoder;
     int defaultBufferedCommands = 0, pmeBufferedCommands = 0;
     int maxBufferedCommands = 10;
