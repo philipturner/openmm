@@ -88,13 +88,12 @@ typedef unsigned long mm_ulong;
 
 float __openmm_erf(float x);
 float __openmm_erfc(float x);
-float2 __openmm_energy_accumulate(float input, float2 sum_parts);
 
 __attribute__((__always_inline__))
 void accumulateEnergy(float input, thread float& sum, thread float& c) {
-    float2 ret = __openmm_energy_accumulate(input, float2(sum, c));
-    sum = ret[0];
-    c = ret[1];
+    volatile float t = sum + input;
+    c += (sum - t) + input;
+    sum = t;
 }
 
 inline long realToFixedPoint(real x) {

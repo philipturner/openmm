@@ -230,18 +230,3 @@ float __openmm_erfc(float x) {
 
     return ret;
 }
-
-__attribute__((__visibility__("default")))
-__attribute__((__noinline__))
-float2 __openmm_energy_accumulate(float input, float2 sum_parts) {
-    float sum = sum_parts[0];
-    float c = sum_parts[1];
-    float t = sum + input;
-    if (sumLarger) {
-        c += (sum - t) + input;
-    } else {
-        c += (input - t) + sum;
-    }
-    sum = t;
-    return float2(sum, c);
-};

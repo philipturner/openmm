@@ -51,6 +51,7 @@ ComputeKernel OpenCLProgram::createKernel(const string& name) {
     desc->setLabel(ns_name);
     desc->setComputeFunction(function.get())
     desc->setThreadGroupSizeIsMultipleOfThreadExecutionWidth(true);
+    desc->setMaxCallStackDepth(3);
     
     MTL::ComputePipelineState* pipeline =
         device->newComputePipelineState(desc.get(), 0, &error);
