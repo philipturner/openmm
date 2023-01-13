@@ -241,20 +241,18 @@ OpenCLContext::OpenCLContext(const System& system, int platformIndex, int device
     reduceEnergyKernel = utilities.createKernel("reduceEnergy");
     setChargesKernel = utilities.createKernel("setCharges");
     
-    // Compile dynamic library for `erf` and `erfc`.
-    // TODO: Does `installName` need @executable_path or @loader_path?
-    auto erfCompileOptions = NS::TransferPtr(
+    // Configure dynamic functions library.
+    auto dynamicFunctionsOptions = NS::TransferPtr(
         MTL::CompileOptions::alloc()->init());
-    erfCompileOptions->setFastMathEnabled(false);
-    erfCompileOptions->setLibraryType(MTL::LibraryTypeDynamic);
-    erfCompileOptions->setInstallName("libOpenMM_erf.metallib");
-    erfLibrary = NS::TransferPtr(
+    dynamicFunctionsOptions->setFastMathEnabled(false);
+    dynamicFunctionsOptions->setLibraryType(MTL::LibraryTypeDynamic);
+    dynamicFunctionsOptions->setInstallName(
+        "@loader_path/libOpenMM_dynamicFunctions.metallib");
+    dynamicFunctionsLibrary = NS::TransferPtr(
         createProgram(OpenCLKernelSources::erf, erfCompileOptions));
-    
-    // Add erf dynamiclib to default compile options.
-    auto erfLibraries = NS::TransferPtr(
+    auto dynamicFunctionsLibraries = NS::TransferPtr(
         NS::Array::alloc()->init(erfLibrary.get()));
-    defaultOptimizationOptions->setLibraries(erfLibraries.get());
+    defaultOptimizationOptions->setLibraries(dynamicFunctionsLibraries.get());
 
     // Decide whether native_sqrt(), native_rsqrt(), and native_recip() are sufficiently accurate to use.
 

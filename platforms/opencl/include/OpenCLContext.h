@@ -680,7 +680,7 @@ private:
     mm_float4 periodicBoxSize, invPeriodicBoxSize, periodicBoxVecX, periodicBoxVecY, periodicBoxVecZ;
     mm_double4 periodicBoxSizeDouble, invPeriodicBoxSizeDouble, periodicBoxVecXDouble, periodicBoxVecYDouble, periodicBoxVecZDouble;
     NS::SharedPtr<MTL::CompileOptions> defaultOptimizationOptions;
-    NS::SharedPtr<MTLDynamicLibrary> erfLibrary;
+    NS::SharedPtr<MTLDynamicLibrary> dynamicFunctions;
     std::map<std::string, std::string> compilationDefines;
     NS::SharedPtr<MTL::Device> device;
     cl::Device infoDevice;
