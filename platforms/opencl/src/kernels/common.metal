@@ -89,11 +89,27 @@ typedef unsigned long mm_ulong;
 float __openmm_erf(float x);
 float __openmm_erfc(float x);
 
+// Call this before summing energy.
+// Source: https://en.wikipedia.org/wiki/Kahan_summation_algorithm
 __attribute__((__always_inline__))
 void accumulateEnergy(float input, thread float& sum, thread float& c) {
     volatile float t = sum + input;
-    c += (sum - t) + input;
+    if (abs(sum) >= abs(input)) {
+        c += (sum - t) + input;
+    } else {
+        c += (input - t) + sum;
+    }
     sum = t;
+}
+
+// Call this before storing energy.
+// Source: https://en.wikipedia.org/wiki/2Sum
+__attribute__((__always_inline__))
+void redistributeEnergy(thread float& sum, thread float& c) {
+    volatile float new_sum = sum + c;
+    volatile float c_virtual = new_sum - sum;
+    sum = new_sum;
+    c = c - c_virtual;
 }
 
 inline long realToFixedPoint(real x) {

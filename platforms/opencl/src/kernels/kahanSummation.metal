@@ -2,8 +2,8 @@
  * Sum the energy buffer.
  */
 
-// Compile this without fast math, and auto-clear the result buffer.
-// Source: https://en.wikipedia.org/wiki/Kahan_summation_algorithm
+// Compile this without fast math.
+
 
 __attribute__((__always_inline__))
 void kahanSum(float input, thread float &sum, thread float &c, bool sumLarger) {
@@ -16,14 +16,24 @@ void kahanSum(float input, thread float &sum, thread float &c, bool sumLarger) {
     sum = t;
 };
 
-__kernel void reduceEnergy(GLOBAL const float* restrict energyBuffer, GLOBAL atomic_float* restrict result, int bufferSize, int elementsPerWorkGroup, DISPATCH_ARGUMENTS) {
+__attribute__((__always_inline__))
+void twoSum(thread float &sum, thread float &c) {
+    float new_sum = sum + c;
+    float c_virtual = new_sum - sum;
+    sum = new_sum;
+    c = c - c_virtual;
+}
+
+// Each pass divides the buffer by ~1000. Repeat this multiple times, until
+// the size reaches 1. For the final result, you don't need to add the
+// compensation. The larger part contains the closest FP32 number to the energy.
+__kernel void reduceEnergyPass(GLOBAL const float2* energyBuffer, GLOBAL float2* result, int bufferSize, DISPATCH_ARGUMENTS) {
     float sum = 0;
     float c = 0;
-    int groupStart = GROUP_ID * elementsPerWorkGroup;
-    int groupEnd = min(groupStart + elementsPerWorkGroup, bufferSize);
-    for (uint index = groupStart + LOCAL_ID; index < groupEnd; index += GROUP_SIZE) {
-        float value = energyBuffer[index];
-        kahanSum(value, sum, c, /*sumLarger=*/true);
+    if (GLOBAL_ID < bufferSize) {
+        float2 value = energyBuffer[GLOBAL_ID];
+        sum = value[0];
+        c = value[1];
     }
     
     // Although threadgroup bandwidth might not be a significant bottleneck,
@@ -55,9 +65,9 @@ __kernel void reduceEnergy(GLOBAL const float* restrict energyBuffer, GLOBAL ato
         kahanSum(other_sum, sum, c, abs(sum) >= abs(other_sum))
         kahanSum(other_c, sum, c, /*sumLarger=*/true);
     }
-    sum += c;
+    twoSum(sum, c);
     if (simd_is_first()) {
-        atomic_fetch_add_explicit(result, sum, memory_order_relaxed);
+        result[GROUP_ID] = float2(sum, c);
     }
 }
 
