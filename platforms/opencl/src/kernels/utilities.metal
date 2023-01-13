@@ -1,4 +1,63 @@
 /**
+ * Encode a command to fill multiple buffers with zero.
+ */
+
+struct AddressWrapper1 {
+    ulong address;
+}
+struct AddressWrapper2 {
+    device void *buffer;
+}
+ 
+// Just pass each resource's address to the shader. This should bypass bugs in
+// Metal Frame Capture. The command buffer inherits the compute pipeline from
+// the parent encoder.
+kernel void prepareClearBuffers(device ulong *addresses [[buffer(0)]],
+                                constant int *sizes [[buffer(1)]],
+                                constant ulong icb_id [[buffer(2)]],
+                                uint tid [[thread_position_in_grid]])
+{
+    auto icb = as_type<command_buffer>(icb_id);
+    compute_command command(icb, tid);
+    command.reset();
+    
+    AddressWrapper1 wrapper(addresses[tid]);
+    auto *buffer = reinterpret_cast<thread AddressWrapper2&>(wrapper).buffer;
+    command.set_kernel_buffer(buffer, 0);
+    
+    uint grid_size = sizes[tid];
+    uint tg_size;
+    if (VENDOR_AMD == 1) {
+        command.set_kernel_buffer(sizes + tid, 1);
+        grid_size = (grid_size + 3) / 4;
+        tg_size = 128;
+    } else {
+        tg_size = 256;
+    }
+    command.concurrent_dispatch_threads(
+        uint3(grid_size, 1, 1), uint3(tg_size, 1, 1));
+}
+
+/**
+ * Fill a buffer with 0.
+ */
+kernel void clearBufferApple(device int *buffer, DISPATCH_ARGUMENTS) {
+    buffer[GLOBAL_ID] = 0;
+}
+
+/**
+ * Fill a buffer with 0.
+ */
+kernel void clearBufferAMD(device int *buffer, constant int &size, DISPATCH_ARGUMENTS) {
+    auto buffer4 = (device int4*)buffer;
+    buffer4[GLOBAL_ID] = int4(0);
+    
+    if (GLOBAL_ID == 0)
+        for (int i = size & ~int(3)); i < size; i++)
+            buffer[i] = 0;
+}
+
+/**
  * Sum a collection of buffers into the first one.
  * Also, write the result into a 64-bit fixed point buffer (overwriting its contents).
  */
@@ -34,8 +93,6 @@ __kernel void reduceForces(__global long* restrict longBuffer, __global real4* r
         longBuffer[index+2*bufferSize] = realToFixedPoint(sum.z);
     }
 }
-
-
 
 /**
  * This is called to determine the accuracy of various native functions.
