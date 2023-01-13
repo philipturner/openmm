@@ -65,6 +65,14 @@ const int OpenCLContext::TileSize = 32;
 OpenCLContext::OpenCLContext(const System& system, int platformIndex, int deviceIndex, const string& precision, OpenCLPlatform::PlatformData& platformData, OpenCLContext* originalContext) :
         ComputeContext(system), platformData(platformData), numForceBuffers(0), hasAssignedPosqCharges(false),
         integration(NULL), expression(NULL), bonded(NULL), nonbonded(NULL), pinnedBuffer(NULL) {
+    // Right now, force-enable Metal API validation to catch bugs.
+    setenv("METAL_DEVICE_WRAPPER_TYPE", "1", 1);
+    setenv("METAL_ERROR_MODE", "5", 1);
+    setenv("METAL_DEBUG_ERROR_MODE", "5", 1);
+    
+    // Catch all objects autoreleased during initialization.
+    commandPool = NS::AutoreleasePool::alloc()->init();
+    
     if (precision == "single") {
         useDoublePrecision = false;
         useMixedPrecision = false;
@@ -101,7 +109,7 @@ OpenCLContext::OpenCLContext(const System& system, int platformIndex, int device
         if (bestDevice == -1)
             throw OpenMMException("No compatible OpenCL device is available");
 
-        MTL::Device* device = devices->object(bestDevice);
+        this->device = NS::TransferPtr(devices->object(bestDevice));
         std::string device_description(
             device->name()->cString(NS::UTF8StringEncoding));
         
@@ -122,16 +130,22 @@ OpenCLContext::OpenCLContext(const System& system, int platformIndex, int device
         if (!foundInfoDevice) {
             throw OpenMMException("Could not find OpenCL device matching: " + device_description);
         }
-
+        
+        // Assert that we've enabled Metal API validation.
+        std::string description(
+            device->description()->cString(NS::UTF8StringEncoding));
+        if (description.find("MTLDebugDevice") == std::string::npos)
+            throw OpenMMException("Metal API validation not active.")
+        
         this->deviceIndex = bestDevice;
+        commandQueue = NS::TransferPtr(device->newCommandQueue());
+        commandBuffer = commandQueue->commandBuffer();
+        
         compilationDefines["WORK_GROUP_SIZE"] = intToString(ThreadBlockSize);
-        defaultOptimizationOptions = MTL::CompileOptions::alloc()->init();
-        supports64BitGlobalAtomics = (device.getInfo<CL_DEVICE_EXTENSIONS>().find("cl_khr_int64_base_atomics") != string::npos);
-        supportsDoublePrecision = (device.getInfo<CL_DEVICE_EXTENSIONS>().find("cl_khr_fp64") != string::npos);
-        if ((useDoublePrecision || useMixedPrecision) && !supportsDoublePrecision)
+        defaultOptimizationOptions = NS::TransferPtr(
+            MTL::CompileOptions::alloc()->init());
+        if (useDoublePrecision || useMixedPrecision)
             throw OpenMMException("This device does not support double precision");
-        string vendor = device.getInfo<CL_DEVICE_VENDOR>();
-        int numThreadBlocksPerComputeUnit = 6;
         
         // Query SIMD width through a compute pipeline.
         NS::Error* error;
@@ -149,10 +163,10 @@ OpenCLContext::OpenCLContext(const System& system, int platformIndex, int device
             throw OpenMMException("Unsupported SIMD width: " + std::to_string(simdWidth));
         
         int numThreadBlocksPerComputeUnit;
-        #if defined(__arch64__)
+        #if defined(__aarch64__)
         // We target 2048 of 3072 threads on Apple, until we know more about
         // performance. This is also the only size we can enforce by checking a
-        // max pipeline's threadgroup size.
+        // pipeline's max threadgroup size.
         numThreadBlocksPerComputeUnit = 2048 / ThreadBlockSize;
         #else
         // For AMD, it seems that 12/CU works best on RDNA, but 16/CU on GCN. We
@@ -167,7 +181,7 @@ OpenCLContext::OpenCLContext(const System& system, int platformIndex, int device
         };
         bool isRDNA = false;
         for (auto candidate : rdnaGPUs) {
-            if (device_description.find(candidate)) {
+            if (device_description.find(candidate) != std::string::npos) {
                 isRDNA = true;
                 break;
             }
@@ -180,42 +194,25 @@ OpenCLContext::OpenCLContext(const System& system, int platformIndex, int device
             numThreadBlocksPerComputeUnit = 4 * 4;
         }
         #endif
-
-        if (supports64BitGlobalAtomics)
-            compilationDefines["SUPPORTS_64_BIT_ATOMICS"] = "";
-        if (supportsDoublePrecision)
-            compilationDefines["SUPPORTS_DOUBLE_PRECISION"] = "";
-        if (simdWidth >= 32)
-            compilationDefines["SYNC_WARPS"] = "mem_fence(CLK_LOCAL_MEM_FENCE)";
-        else
-            compilationDefines["SYNC_WARPS"] = "barrier(CLK_LOCAL_MEM_FENCE)";
-        vector<cl::Device> contextDevices;
-        contextDevices.push_back(device);
-        cl_context_properties cprops[] = {CL_CONTEXT_PLATFORM, (cl_context_properties) platforms[bestPlatform](), 0};
-        if (originalContext == NULL) {
-            context = cl::Context(contextDevices, cprops, errorCallback);
-            defaultQueue = cl::CommandQueue(context, device);
-        }
-        else {
-            context = originalContext->context;
-            defaultQueue = originalContext->defaultQueue;
-        }
-        currentQueue = defaultQueue;
+        
+        compilationDefines["SYNC_WARPS"] =
+            "threadgroup_barrier(mem_flags::mem_threadgroup);";
         numAtoms = system.getNumParticles();
         paddedNumAtoms = TileSize*((numAtoms+TileSize-1)/TileSize);
         numAtomBlocks = (paddedNumAtoms+(TileSize-1))/TileSize;
-        numThreadBlocks = numThreadBlocksPerComputeUnit*device.getInfo<CL_DEVICE_MAX_COMPUTE_UNITS>();
+        numThreadBlocks = numThreadBlocksPerComputeUnit *
+            infoDevice.getInfo<CL_DEVICE_MAX_COMPUTE_UNITS>();
         {
             posq.initialize<mm_float4>(*this, paddedNumAtoms, "posq");
             velm.initialize<mm_float4>(*this, paddedNumAtoms, "velm");
-            compilationDefines["convert_real4"] = "convert_float4";
-            compilationDefines["make_real2"] = "make_float2";
-            compilationDefines["make_real3"] = "make_float3";
-            compilationDefines["make_real4"] = "make_float4";
-            compilationDefines["convert_mixed4"] = "convert_float4";
-            compilationDefines["make_mixed2"] = "make_float2";
-            compilationDefines["make_mixed3"] = "make_float3";
-            compilationDefines["make_mixed4"] = "make_float4";
+            compilationDefines["convert_real4"] = "float4";
+            compilationDefines["make_real2"] = "float2";
+            compilationDefines["make_real3"] = "float3";
+            compilationDefines["make_real4"] = "float4";
+            compilationDefines["convert_mixed4"] = "float4";
+            compilationDefines["make_mixed2"] = "float2";
+            compilationDefines["make_mixed3"] = "float3";
+            compilationDefines["make_mixed4"] = "float4";
         }
         longForceBuffer.initialize<cl_long>(*this, 3*paddedNumAtoms, "longForceBuffer");
         posCellOffsets.resize(paddedNumAtoms, mm_int4(0, 0, 0, 0));
@@ -233,18 +230,35 @@ OpenCLContext::OpenCLContext(const System& system, int platformIndex, int device
 
     // Create utility kernels that are used in multiple places.
 
-    auto utilities = NS::TransferPtr(createProgram(OpenCLKernelSources::utilities));
-    simdWidthKernel = "findSIMDWidth"
-    reduceReal4Kernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "reduceReal4Buffer"));
-    reduceForcesKernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "reduceForces"));
-    reduceEnergyKernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "reduceEnergy"));
-    setChargesKernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "setCharges"));
+    // TODO: Speed up copying through indirect command buffers. Have the GPU
+    // encode commands and execute them concurrently. You can make just one
+    // kernel that encodes everything in parallel, instead of multiple kernels
+    // for different amounts of buffers.
+    OpenCLProgram utilities(
+        *this, createProgram(OpenCLKernelSources::utilities));
+    reduceReal4Kernel = utilities.createKernel("reduceReal4Buffer");
+    reduceForcesKernel = utilities.createKernel("reduceForces");
+    reduceEnergyKernel = utilities.createKernel("reduceEnergy");
+    setChargesKernel = utilities.createKernel("setCharges");
     
     // Compile dynamic library for `erf` and `erfc`.
+    // TODO: Does `installName` need @executable_path or @loader_path?
+    auto erfCompileOptions = NS::TransferPtr(
+        MTL::CompileOptions::alloc()->init());
+    erfCompileOptions->setFastMathEnabled(false);
+    erfCompileOptions->setLibraryType(MTL::LibraryTypeDynamic);
+    erfCompileOptions->setInstallName("libOpenMM_erf.metallib");
+    erfLibrary = NS::TransferPtr(
+        createProgram(OpenCLKernelSources::erf, erfCompileOptions));
+    
+    // Add erf dynamiclib to default compile options.
+    auto erfLibraries = NS::TransferPtr(
+        NS::Array::alloc()->init(erfLibrary.get()));
+    defaultOptimizationOptions->setLibraries(erfLibraries.get());
 
     // Decide whether native_sqrt(), native_rsqrt(), and native_recip() are sufficiently accurate to use.
 
-    auto accuracyKernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "determineNativeAccuracy"));
+    auto accuracyKernel = utilities.createKernel("determineNativeAccuracy");
     OpenCLArray valuesArray(*this, 20, sizeof(mm_float8), "values");
     vector<mm_float8> values(valuesArray.getSize());
     float nextValue = 1e-4f;
@@ -253,8 +267,7 @@ OpenCLContext::OpenCLContext(const System& system, int platformIndex, int device
         nextValue *= (float) M_PI;
     }
     valuesArray.upload(values);
-    // TODO: Fix this to use OpenCLKernel API instead of cl::Kernel API.
-    accuracyKernel.setArg<MTL::Buffer>(0, valuesArray.getDeviceBuffer());
+    accuracyKernel.setArg(0, valuesArray);
     accuracyKernel.setArg<cl_int>(1, values.size());
     executeKernel(accuracyKernel, values.size());
     valuesArray.download(values);
@@ -270,9 +283,14 @@ OpenCLContext::OpenCLContext(const System& system, int platformIndex, int device
     }
     compilationDefines["SQRT"] = (maxSqrtError < 1e-6) ? "fast::sqrt" : "precise::sqrt";
     compilationDefines["RSQRT"] = (maxRsqrtError < 1e-6) ? "fast::rsqrt" : "precise::rsqrt";
-    compilationDefines["RECIP"] = (maxRecipError < 1e-6) ? "fast::recip" : "precise::recip";
+    compilationDefines["RECIP(x)"] = (maxRecipError < 1e-6) ? "fast::divide(1.0f, x)" : "precise::divide(1.0f, x);";
     compilationDefines["EXP"] = (maxExpError < 1e-6) ? "fast::exp" : "precise::exp";
     compilationDefines["LOG"] = (maxLogError < 1e-6) ? "fast::log" : "precise::log";
+    // Pause: I'm curious what the results are.
+    throw OpenMMException(
+        "Accuracy results:" + compilationDefines["SQRT"] +
+         compilationDefines["RSQRT"] + compilationDefines["RECIP(x)"] +
+         compilationDefines["EXP"] + compilationDefines["LOG"]);
     
     compilationDefines["POW"] = "precise::pow";
     compilationDefines["COS"] = "precise::cos";
@@ -338,6 +356,10 @@ OpenCLContext::OpenCLContext(const System& system, int platformIndex, int device
     nonbonded = new OpenCLNonbondedUtilities(*this);
     integration = new OpenCLIntegrationUtilities(*this, system);
     expression = new OpenCLExpressionUtilities(*this);
+    
+    // Garbage-collect autoreleased objects.
+    commandPool->drain();
+    commandPool = NS::AutoreleasePool::alloc()->init();
 }
 
 OpenCLContext::~OpenCLContext() {
@@ -413,6 +435,10 @@ void OpenCLContext::initialize() {
     velm.upload(pinnedMemory);
     findMoleculeGroups();
     nonbonded->initialize(system);
+    
+    // Garbage-collect autoreleased objects.
+    commandPool->drain();
+    commandPool = NS::AutoreleasePool::alloc()->init();
 }
 
 void OpenCLContext::initializeContexts() {
@@ -578,25 +604,13 @@ MTL::Library* OpenCLContext::createProgram(const string source, const map<string
         src << endl;
     if (supportsDoublePrecision)
         src << "#pragma OPENCL EXTENSION cl_khr_fp64 : enable\n";
-    if (useDoublePrecision) {
-        src << "typedef double real;\n";
-        src << "typedef double2 real2;\n";
-        src << "typedef double3 real3;\n";
-        src << "typedef double4 real4;\n";
-    }
-    else {
+    {
         src << "typedef float real;\n";
         src << "typedef float2 real2;\n";
         src << "typedef float3 real3;\n";
         src << "typedef float4 real4;\n";
     }
-    if (useDoublePrecision || useMixedPrecision) {
-        src << "typedef double mixed;\n";
-        src << "typedef double2 mixed2;\n";
-        src << "typedef double3 mixed3;\n";
-        src << "typedef double4 mixed4;\n";
-    }
-    else {
+    {
         src << "typedef float mixed;\n";
         src << "typedef float2 mixed2;\n";
         src << "typedef float3 mixed3;\n";
@@ -657,6 +671,7 @@ void OpenCLContext::executeKernel(OpenCLKernel kernel, int workUnits, int blockS
         blockSize = ThreadBlockSize;
     int size = std::min((workUnits+blockSize-1)/blockSize, numThreadBlocks)*blockSize;
     try {
+        kernel.execute();
         currentQueue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(size), cl::NDRange(blockSize));
     }
     catch (cl::Error err) {
@@ -667,7 +682,29 @@ void OpenCLContext::executeKernel(OpenCLKernel kernel, int workUnits, int blockS
 }
 
 int OpenCLContext::computeThreadBlockSize(double memory) const {
-    int maxShared = device.getInfo<CL_DEVICE_LOCAL_MEM_SIZE>();
+#if defined(__aarch64__)
+    // Many assignable sizes divide into 60 KB/core, instead of 64 KB/core.
+    int maxShared = 64 * 1024;
+    int groupsPerCore = maxShared / int(memory);
+    bool groupsPower2 = std::popcount(uint32_t(groupsPerCore)) == 1;
+    bool sharedIsSmall = memory < 2 * 1024; // roundUp(65536/(3072/64))
+    if ((!groupsPower2 || sharedIsSmall) &&
+        (groupsPerCore * memory > 60 * 1024)) {
+        groupsPerCore = 60 * 1024 / int(memory);
+    }
+    
+    // The actual maximum is 3072, but register pressure can invisibly throttle
+    // this to 2048.
+    int threadsPerCore = 2048;
+    int threadsPerThreadgroup = threadsPerCore / groupsPerCore;
+    
+    // TODO: Determine whether we should strongly favor 256 on M1.
+    threadsPerThreadgroup = threadsPerThreadgroup & ~int(64 - 1);
+    threadsPerThreadgroup = max(32, threadsPerThreadgroup);
+    threadsPerThreadgroup = min(1024, threadsPerThreadgroup);
+    return threadsPerThreadgroup;
+#else
+    int maxShared = device->maxThreadgroupMemoryLength();
     // On some implementations, more local memory gets used than we calculate by
     // adding up the sizes of the fields.  To be safe, include a factor of 0.5.
     int max = (int) (0.5*maxShared/memory);
@@ -677,6 +714,7 @@ int OpenCLContext::computeThreadBlockSize(double memory) const {
     while (threads+64 < max)
         threads += 64;
     return threads;
+#endif
 }
 
 void OpenCLContext::clearBuffer(ArrayInterface& array) {

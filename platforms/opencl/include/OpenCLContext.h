@@ -451,7 +451,8 @@ public:
      * Get the standard number of thread blocks to use when executing kernels.
      */
     // TODO: Revisit every line that touches this, because it could be making
-    // incorrect assumptions about performance on M1.
+    // incorrect assumptions about performance on M1. Also consider changing the
+    // work group size.
     int getNumThreadBlocks() const {
         return numThreadBlocks;
     }
@@ -679,6 +680,7 @@ private:
     mm_float4 periodicBoxSize, invPeriodicBoxSize, periodicBoxVecX, periodicBoxVecY, periodicBoxVecZ;
     mm_double4 periodicBoxSizeDouble, invPeriodicBoxSizeDouble, periodicBoxVecXDouble, periodicBoxVecYDouble, periodicBoxVecZDouble;
     NS::SharedPtr<MTL::CompileOptions> defaultOptimizationOptions;
+    NS::SharedPtr<MTLDynamicLibrary> erfLibrary;
     std::map<std::string, std::string> compilationDefines;
     NS::SharedPtr<MTL::Device> device;
     cl::Device infoDevice;

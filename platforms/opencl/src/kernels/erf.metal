@@ -22,7 +22,6 @@
  * THE SOFTWARE.
  */
 
-
 #include <metal_stdlib>
 using namespace metal;
 
@@ -100,9 +99,14 @@ using namespace metal;
 // source code for every compilation, or bloat the GPU executable. We also don't
 // want to pollute the source code with all these defines.
 //
-// This is compiled with fast math disabled.
-#define mad fma
+// Compile this with fast math disabled.
+//
+// TODO: Check whether the compiler is automatically vectorizing these FMAs on
+// M1. We need to debug accuracy first, before doing this premature
+// optimization.
+#define mad fast::fma
 
+__attribute__((__visibility__("default")))
 __attribute__((__noinline__))
 float __openmm_erf(float x) {
     uint hx = as_type<uint>(x);
@@ -164,6 +168,7 @@ float __openmm_erf(float x) {
     return ret;
 }
 
+__attribute__((__visibility__("default")))
 __attribute__((__noinline__))
 float __openmm_erfc(float x) {
     int hx = as_type<int>(x);

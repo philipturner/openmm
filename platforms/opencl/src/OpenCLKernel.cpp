@@ -51,6 +51,9 @@ void OpenCLKernel::execute(int threads, int blockSize) {
     // possible resize() will get called on an array, causing its internal storage to be
     // recreated.
     
+    if (blockSize % context.getSIMDWidth() != 0)
+        throw OpenMMException("Threadgroup size not multiple of execution width.")
+    
     MTL::ComputeCommandEncoder* encoder = context.nextComputeCommand();
     encoder->setComputePipelineState(pipeline.get());
     for (int i = 0; i < arrayArgs.size(); i++) {

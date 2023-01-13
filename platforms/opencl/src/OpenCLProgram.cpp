@@ -50,6 +50,7 @@ ComputeKernel OpenCLProgram::createKernel(const string& name) {
         MTL::ComputePipelineDescriptor::alloc()->init());
     desc->setLabel(ns_name);
     desc->setComputeFunction(function.get())
+    desc->setThreadGroupSizeIsMultipleOfThreadExecutionWidth(true);
     
     MTL::ComputePipelineState* pipeline =
         device->newComputePipelineState(desc.get(), 0, &error);
@@ -59,7 +60,7 @@ ComputeKernel OpenCLProgram::createKernel(const string& name) {
         throw OpenMMException(
             "Error creating pipeline: " + std::string(error_description));
     }
-    #if defined(__arch64__)
+    #if defined(__aarch64__)
     if (pipeline->maxThreadsPerThreadgroup() < 1024) {
         // Our assumptions were wrong; adjust the target threadgroup size.
         throw OpenMMException(

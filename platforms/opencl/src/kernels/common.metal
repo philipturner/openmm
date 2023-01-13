@@ -28,6 +28,9 @@ __attribute__((overloadable)) unsigned long atom_add(volatile __global unsigned 
 #define RESTRICT
 #define LOCAL_ID thread_position_in_threadgroup
 #define LOCAL_SIZE threads_per_threadgroup
+#define SIMD_LANE_ID thread_index_in_simdgroup
+#define SIMD_ID simdgroup_index_in_threadgroup
+#define SIMD_SIZE threads_per_simdgroup
 #define GLOBAL_ID thread_position_in_grid
 #define GLOBAL_SIZE threads_per_grid
 #define GROUP_ID threadgroup_position_in_grid
@@ -35,6 +38,17 @@ __attribute__((overloadable)) unsigned long atom_add(volatile __global unsigned 
 #define SYNC_THREADS threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
 #define MEM_FENCE threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
 #define ATOMIC_ADD(dest, value) atom_add(dest, value)
+
+#define DISPATCH_ARGUMENTS \
+ushort thread_position_in_threadgroup [[thread_position_in_threadgroup]], \
+ushort threads_per_threadgroup [[threads_per_threadgroup]], \
+ushort thread_index_in_simdgroup [[thread_index_in_simdgroup]], \
+ushort simdgroup_index_in_threadgroup [[simdgroup_index_in_threadgroup]], \
+ushort threads_per_simdgroup [[threads_per_simdgroup]], \
+uint thread_position_in_grid [[thread_position_in_grid]], \
+uint threads_per_grid [[threads_per_grid]], \
+uint threadgroup_position_in_grid [[threadgroup_position_in_grid]], \
+uint threadgroups_per_grid [[threadgroups_per_grid]]
 
 typedef long mm_long;
 typedef unsigned long mm_ulong;
@@ -72,25 +86,8 @@ typedef unsigned long mm_ulong;
 #define atanf(x) atan(x)
 #define atan2f(x, y) atan2(x, y)
 
-namespace metal {
-namespace fast {
-
-float recip(float x) {
-    return fast::divide(1, x);
-}
-
-};
-}; // namespace metal
-
-namespace metal {
-namespace precise {
-
-float recip(float x) {
-    return precise::divide(1, x);
-}
-
-};
-}; // namespace metal
+float __openmm_erf(float x);
+float __openmm_erfc(float x);
 
 inline long realToFixedPoint(real x) {
     return (long) (x * 0x100000000);
