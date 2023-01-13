@@ -158,7 +158,7 @@ OpenCLContext::OpenCLContext(const System& system, int platformIndex, int device
         // For AMD, it seems that 12/CU works best on RDNA, but 16/CU on GCN. We
         // cannot trust Metal to report the true SIMD width; it probably treats
         // both architectures as 64-wide.
-        std::string rdnaGPUs = {
+        std::vector<std::string> rdnaGPUs = {
             "5300", "5500", "5600", "5700", "5800",
             "6300", "6400", "6500", "6600", "6700", "6800", "6900",
             "6350", "6450", "6550", "6650", "6750", "6850", "6950",
