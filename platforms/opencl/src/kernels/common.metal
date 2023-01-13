@@ -72,6 +72,26 @@ typedef unsigned long mm_ulong;
 #define atanf(x) atan(x)
 #define atan2f(x, y) atan2(x, y)
 
+namespace metal {
+namespace fast {
+
+float recip(float x) {
+    return fast::divide(1, x);
+}
+
+};
+}; // namespace metal
+
+namespace metal {
+namespace precise {
+
+float recip(float x) {
+    return precise::divide(1, x);
+}
+
+};
+}; // namespace metal
+
 inline long realToFixedPoint(real x) {
     return (long) (x * 0x100000000);
 }

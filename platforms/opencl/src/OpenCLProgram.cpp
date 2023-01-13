@@ -59,5 +59,12 @@ ComputeKernel OpenCLProgram::createKernel(const string& name) {
         throw OpenMMException(
             "Error creating pipeline: " + std::string(error_description));
     }
+    #if defined(__arch64__)
+    if (pipeline->maxThreadsPerThreadgroup() < 1024) {
+        // Our assumptions were wrong; adjust the target threadgroup size.
+        throw OpenMMException(
+            "Compute pipeline on M1 with unexpected register pressure.")
+    }
+    #endif
     return shared_ptr<ComputeKernelImpl>(new OpenCLKernel(context, pipeline));
 }

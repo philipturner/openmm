@@ -156,6 +156,13 @@ public:
         return device;
     }
     
+    // We need this to retrieve system information on AMD devices. On M1, it's
+    // technically possible to remove the OpenCL dependency entirely. But it
+    // would be harder to maintain two separate code paths for M1 and AMD.
+    cl::Device getInfoDevice() {
+        return infoDevice;
+    }
+    
     // You must call `newCompute/BlitCommand` before starting each command.
     // Otherwise, you will mess with the automatic tracking of command buffer
     // size.
@@ -437,13 +444,14 @@ public:
     /**
      * Get the number of blocks of TileSize atoms.
      */
-     */
     int getNumAtomBlocks() const {
         return numAtomBlocks;
     }
     /**
      * Get the standard number of thread blocks to use when executing kernels.
      */
+    // TODO: Revisit every line that touches this, because it could be making
+    // incorrect assumptions about performance on M1.
     int getNumThreadBlocks() const {
         return numThreadBlocks;
     }
@@ -451,7 +459,7 @@ public:
      * Get the maximum number of threads in a thread block supported by this device.
      */
     int getMaxThreadBlockSize() const {
-        return device.getInfo<CL_DEVICE_MAX_WORK_GROUP_SIZE>();
+        return device->maxThreadsPerThreadgroup();
     }
     /**
      * Get the number of force buffers.
@@ -464,7 +472,7 @@ public:
      * may be more efficient on CPUs and GPUs.
      */
     bool getIsCPU() const {
-        return (device.getInfo<CL_DEVICE_TYPE>() == CL_DEVICE_TYPE_CPU);
+        return false;
     }
     /**
      * Get the SIMD width of the device being used.
@@ -476,25 +484,25 @@ public:
      * Get whether the device being used supports 64 bit atomic operations on global memory.
      */
     bool getSupports64BitGlobalAtomics() const {
-        return supports64BitGlobalAtomics;
+        return false;
     }
     /**
      * Get whether the device being used supports double precision math.
      */
     bool getSupportsDoublePrecision() const {
-        return supportsDoublePrecision;
+        return false;
     }
     /**
      * Get whether double precision is being used.
      */
     bool getUseDoublePrecision() const {
-        return useDoublePrecision;
+        return false;
     }
     /**
      * Get whether mixed precision is being used.
      */
     bool getUseMixedPrecision() const {
-        return useMixedPrecision;
+        return false;
     }
     /**
      * Get whether the periodic box is triclinic.
@@ -663,18 +671,17 @@ public:
 private:
     OpenCLPlatform::PlatformData& platformData;
     int deviceIndex;
-    int platformIndex;
-    int contextIndex;
     int numAtomBlocks;
     int numThreadBlocks;
     int numForceBuffers;
     int simdWidth;
-    bool supports64BitGlobalAtomics, supportsDoublePrecision, useDoublePrecision, useMixedPrecision, boxIsTriclinic, hasAssignedPosqCharges;
+    bool boxIsTriclinic, hasAssignedPosqCharges;
     mm_float4 periodicBoxSize, invPeriodicBoxSize, periodicBoxVecX, periodicBoxVecY, periodicBoxVecZ;
     mm_double4 periodicBoxSizeDouble, invPeriodicBoxSizeDouble, periodicBoxVecXDouble, periodicBoxVecYDouble, periodicBoxVecZDouble;
     NS::SharedPtr<MTL::CompileOptions> defaultOptimizationOptions;
     std::map<std::string, std::string> compilationDefines;
     NS::SharedPtr<MTL::Device> device;
+    cl::Device infoDevice;
     NS::SharedPtr<MTL::CommandQueue> queue;
     NS::SharedPtr<MTL::SharedEvent> syncEvent;
     NS::AutoreleasePool* commandPool;

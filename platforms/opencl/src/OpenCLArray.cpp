@@ -64,6 +64,10 @@ void OpenCLArray::initialize(OpenCLContext& context, size_t size, int elementSiz
     try {
         MTL::Device* device = context->getDevice();
         buffer = device->makeBuffer(size * elementSize, flags);
+        
+        // Copy name to Metal resource label, to help with debugging.
+        auto string = NS::String::string(name.c_str, NS::UTF8StringEncoding);
+        buffer->setLabel(string);
     }
     catch (cl::Error err) {
         std::stringstream str;

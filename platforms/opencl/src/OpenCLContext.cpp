@@ -62,22 +62,6 @@ using namespace std;
 const int OpenCLContext::ThreadBlockSize = 64;
 const int OpenCLContext::TileSize = 32;
 
-// TODO: Use `MTLNewLibraryCompletionHandler`.
-static void CL_CALLBACK errorCallback(const char* errinfo, const void* private_info, size_t cb, void* user_data) {
-    string skip = "OpenCL Build Warning : Compiler build log:";
-    if (strncmp(errinfo, skip.c_str(), skip.length()) == 0)
-        return; // OS X Lion insists on calling this for every build warning, even though they aren't errors.
-    std::cerr << "OpenCL internal error: " << errinfo << std::endl;
-}
-
-static bool isSupported(cl::Platform platform) {
-    string vendor = platform.getInfo<CL_PLATFORM_VENDOR>();
-    return (vendor.find("NVIDIA") == 0 ||
-            vendor.find("Advanced Micro Devices") == 0 ||
-            vendor.find("Apple") == 0 ||
-            vendor.find("Intel") == 0);
-}
-
 OpenCLContext::OpenCLContext(const System& system, int platformIndex, int deviceIndex, const string& precision, OpenCLPlatform::PlatformData& platformData, OpenCLContext* originalContext) :
         ComputeContext(system), platformData(platformData), numForceBuffers(0), hasAssignedPosqCharges(false),
         integration(NULL), expression(NULL), bonded(NULL), nonbonded(NULL), pinnedBuffer(NULL) {
@@ -85,198 +69,118 @@ OpenCLContext::OpenCLContext(const System& system, int platformIndex, int device
         useDoublePrecision = false;
         useMixedPrecision = false;
     }
-    else if (precision == "mixed") {
-        useDoublePrecision = false;
-        useMixedPrecision = true;
-    }
-    else if (precision == "double") {
-        useDoublePrecision = true;
-        useMixedPrecision = false;
-    }
     else
         throw OpenMMException("Illegal value for Precision: "+precision);
     try {
-        contextIndex = platformData.contexts.size();
-        std::vector<cl::Platform> platforms;
-        cl::Platform::get(&platforms);
-        if (platformIndex < -1 || platformIndex >= (int) platforms.size())
-            throw OpenMMException("Illegal value for OpenCLPlatformIndex: "+intToString(platformIndex));
-        if (platforms.size() > 1 && platformIndex == -1 && deviceIndex != -1)
-            throw OpenMMException("Specified DeviceIndex but not OpenCLPlatformIndex.  When multiple platforms are available, a platform index is needed to specify a device.");
-        const int minThreadBlockSize = 32;
+        NS::Array* devices = MTL::CopyAllDevices();
 
-        int bestSpeed = -1;
+        // We are simultaneously initializing Metal and OpenCL. First, search
+        // through the Metal devices. `OpenCLDeviceIndex` translates to an index
+        // in the array from `MTLCopyAllDevices()`, whose order seems stable.
+        // Then, we scour all OpenCL devices over all platforms. Find one with
+        // the same name, or fail otherwise.
         int bestDevice = -1;
-        int bestPlatform = -1;
-        bool bestSupported = false;
-        for (int j = 0; j < platforms.size(); j++) {
-            // If they supplied a valid platformIndex, we only look through that platform
-            if (j != platformIndex && platformIndex != -1)
+        for (int j = 0; j < devices->count(); j++) {
+            // Metal backend currently doesn't support Intel GPUs. The CPU has
+            // more FLOPS than the GPU for these devices.
+            if (device->isLowPower())
                 continue;
 
-            // Always prefer a supported platform over an unsupported one.
-            bool supported = isSupported(platforms[j]);
-            if (!supported && bestSupported)
-                continue;
-            string platformVendor = platforms[j].getInfo<CL_PLATFORM_VENDOR>();
-            vector<cl::Device> devices;
-            try {
-                platforms[j].getDevices(CL_DEVICE_TYPE_ALL, &devices);
-            }
-            catch (...) {
-                // There are no devices available for this platform.
-                continue;
-            }
-            if (deviceIndex < -1 || deviceIndex >= (int) devices.size())
+            if (deviceIndex < -1 || deviceIndex >= (int) devices->count())
                 throw OpenMMException("Illegal value for DeviceIndex: "+intToString(deviceIndex));
 
-            for (int i = 0; i < (int) devices.size(); i++) {
-                // If they supplied a valid deviceIndex, we only look through that one
-                if (i != deviceIndex && deviceIndex != -1)
-                    continue;
-                if (platformVendor == "Apple" && (devices[i].getInfo<CL_DEVICE_TYPE>() == CL_DEVICE_TYPE_CPU))
-                    continue; // The CPU device on OS X won't work correctly.
-                if (useMixedPrecision || useDoublePrecision) {
-                    bool supportsDouble = (devices[i].getInfo<CL_DEVICE_EXTENSIONS>().find("cl_khr_fp64") != string::npos);
-                    if (!supportsDouble)
-                        continue; // This device does not support double precision.
-                }
-                int maxSize = devices[i].getInfo<CL_DEVICE_MAX_WORK_ITEM_SIZES>()[0];
-                int processingElementsPerComputeUnit = 8;
-                if (devices[i].getInfo<CL_DEVICE_TYPE>() != CL_DEVICE_TYPE_GPU) {
-                    processingElementsPerComputeUnit = 1;
-                }
-                else if (devices[i].getInfo<CL_DEVICE_EXTENSIONS>().find("cl_nv_device_attribute_query") != string::npos) {
-                    cl_uint computeCapabilityMajor;
-                    clGetDeviceInfo(devices[i](), CL_DEVICE_COMPUTE_CAPABILITY_MAJOR_NV, sizeof(cl_uint), &computeCapabilityMajor, NULL);
-                    processingElementsPerComputeUnit = (computeCapabilityMajor < 2 ? 8 : 32);
-                }
-                else if (devices[i].getInfo<CL_DEVICE_EXTENSIONS>().find("cl_amd_device_attribute_query") != string::npos) {
-                    // This attribute does not ensure that all queries are supported by the runtime (it may be an older runtime,
-                    // or the CPU device) so still have to check for errors.
-                    try {
-                        processingElementsPerComputeUnit =
-                            // AMD GPUs either have a single VLIW SIMD or multiple scalar SIMDs.
-                            // The SIMD width is the number of threads the SIMD executes per cycle.
-                            // This will be less than the wavefront width since it takes several
-                            // cycles to execute the full wavefront.
-                            // The SIMD instruction width is the VLIW instruction width (or 1 for scalar),
-                            // this is the number of ALUs that can be executing per instruction per thread.
-                            devices[i].getInfo<CL_DEVICE_SIMD_PER_COMPUTE_UNIT_AMD>() *
-                            devices[i].getInfo<CL_DEVICE_SIMD_WIDTH_AMD>() *
-                            devices[i].getInfo<CL_DEVICE_SIMD_INSTRUCTION_WIDTH_AMD>();
-                        // Just in case any of the queries return 0.
-                        if (processingElementsPerComputeUnit <= 0)
-                            processingElementsPerComputeUnit = 1;
-                    }
-                    catch (cl::Error err) {
-                        // Runtime does not support the queries so use default.
-                    }
-                }
-                int speed = devices[i].getInfo<CL_DEVICE_MAX_COMPUTE_UNITS>()*processingElementsPerComputeUnit*devices[i].getInfo<CL_DEVICE_MAX_CLOCK_FREQUENCY>();
-                if (maxSize >= minThreadBlockSize && (speed > bestSpeed || (supported && !bestSupported))) {
-                    bestDevice = i;
-                    bestSpeed = speed;
-                    bestPlatform = j;
-                    bestSupported = supported;
+            // If they supplied a valid deviceIndex, we only look through that one
+            if (i != deviceIndex && deviceIndex != -1)
+                continue;
+            
+            // We're not going to query OpenCL parameters because that tactic is
+            // broken on macOS. If you have two AMD GPUs, choose the one you
+            // want through `OpenCLDeviceIndex`.
+            bestDevice = i;
+        }
+        if (bestDevice == -1)
+            throw OpenMMException("No compatible OpenCL device is available");
+
+        MTL::Device* device = devices->object(bestDevice);
+        std::string device_description(
+            device->name()->cString(NS::UTF8StringEncoding));
+        
+        std::vector<cl::Platform> clPlatforms;
+        cl::Platform::get(&platforms);
+        bool foundInfoDevice = false;
+        for (auto clPlatform : clPlatforms) {
+            std::vector<cl::Device> clDevices;
+            clPlatform.getDevices(CL_DEVICE_TYPE_ALL, &devices);
+            for (auto clDevice : clDevices) {
+                auto name = clDevice.getInfo<CL_DEVICE_NAME>();
+                if (name == device_description) {
+                    this->infoDevice = clDevice;
+                    break;
                 }
             }
         }
-
-        if (bestPlatform == -1)
-            throw OpenMMException("No compatible OpenCL platform is available");
-
-        if (bestDevice == -1)
-            throw OpenMMException("No compatible OpenCL device is available");
-        
-        if (!bestSupported)
-            cout << "WARNING: Using an unsupported OpenCL implementation.  Results may be incorrect." << endl;
-
-        vector<cl::Device> devices;
-        platforms[bestPlatform].getDevices(CL_DEVICE_TYPE_ALL, &devices);
-        string platformVendor = platforms[bestPlatform].getInfo<CL_PLATFORM_VENDOR>();
-        device = devices[bestDevice];
+        if (!foundInfoDevice) {
+            throw OpenMMException("Could not find OpenCL device matching: " + device_description);
+        }
 
         this->deviceIndex = bestDevice;
-        this->platformIndex = bestPlatform;
-        if (device.getInfo<CL_DEVICE_MAX_WORK_GROUP_SIZE>() < minThreadBlockSize)
-            throw OpenMMException("The specified OpenCL device is not compatible with OpenMM");
         compilationDefines["WORK_GROUP_SIZE"] = intToString(ThreadBlockSize);
-        if (platformVendor.size() >= 5 && platformVendor.substr(0, 5) == "Intel")
-            defaultOptimizationOptions = "";
-        else
-            defaultOptimizationOptions = "-cl-mad-enable -cl-no-signed-zeros";
+        defaultOptimizationOptions = MTL::CompileOptions::alloc()->init();
         supports64BitGlobalAtomics = (device.getInfo<CL_DEVICE_EXTENSIONS>().find("cl_khr_int64_base_atomics") != string::npos);
         supportsDoublePrecision = (device.getInfo<CL_DEVICE_EXTENSIONS>().find("cl_khr_fp64") != string::npos);
         if ((useDoublePrecision || useMixedPrecision) && !supportsDoublePrecision)
             throw OpenMMException("This device does not support double precision");
         string vendor = device.getInfo<CL_DEVICE_VENDOR>();
         int numThreadBlocksPerComputeUnit = 6;
-        if (vendor.size() >= 6 && vendor.substr(0, 6) == "NVIDIA") {
-            compilationDefines["WARPS_ARE_ATOMIC"] = "";
-            simdWidth = 32;
-            if (device.getInfo<CL_DEVICE_EXTENSIONS>().find("cl_nv_device_attribute_query") != string::npos) {
-                // Compute level 1.2 and later Nvidia GPUs support 64 bit atomics, even though they don't list the
-                // proper extension as supported.  We only use them on compute level 2.0 or later, since they're very
-                // slow on earlier GPUs.
-
-                cl_uint computeCapabilityMajor;
-                clGetDeviceInfo(device(), CL_DEVICE_COMPUTE_CAPABILITY_MAJOR_NV, sizeof(cl_uint), &computeCapabilityMajor, NULL);
-                if (computeCapabilityMajor > 1)
-                    supports64BitGlobalAtomics = true;
-                if (computeCapabilityMajor == 5) {
-                    // Workaround for a bug in Maxwell on CUDA 6.x.
-
-                    string platformVersion = platforms[bestPlatform].getInfo<CL_PLATFORM_VERSION>();
-                    if (platformVersion.find("CUDA 6") != string::npos)
-                        supports64BitGlobalAtomics = false;
-                }
+        
+        // Query SIMD width through a compute pipeline.
+        NS::Error* error;
+        auto testLibrary = NS::TransferPtr(
+            device->newLibrary("kernel void getSIMDWidth() {}", NULL, &error));
+        if (error) throw OpenMMException("Could not create test library.");
+        auto testFunction = NS::TransferPtr(
+            library->newFunction("getSIMDWidth", &error));
+        if (error) throw OpenMMException("Could not create test function.");
+        auto testPipeline = NS::TransferPtr(
+            device->newComputePipelineState(testFunction.get(), &error));
+        if (error) throw OpenMMException("Could not create test pipeline.");
+        simdWidth = testPipeline->threadExecutionWidth();
+        if (simdWidth != 32 && simdWidth != 64)
+            throw OpenMMException("Unsupported SIMD width: " + std::to_string(simdWidth));
+        
+        int numThreadBlocksPerComputeUnit;
+        #if defined(__arch64__)
+        // We target 2048 of 3072 threads on Apple, until we know more about
+        // performance. This is also the only size we can enforce by checking a
+        // max pipeline's threadgroup size.
+        numThreadBlocksPerComputeUnit = 2048 / ThreadBlockSize;
+        #else
+        // For AMD, it seems that 12/CU works best on RDNA, but 16/CU on GCN. We
+        // cannot trust Metal to report the true SIMD width; it probably treats
+        // both architectures as 64-wide.
+        std::string rdnaGPUs = {
+            "5300", "5500", "5600", "5700", "5800",
+            "6300", "6400", "6500", "6600", "6700", "6800", "6900",
+            "6350", "6450", "6550", "6650", "6750", "6850", "6950",
+            "7300", "7400", "7500", "7600", "7700", "7800", "7900",
+            "7350", "7450", "7550", "7650", "7750", "7850", "7950",
+        };
+        bool isRDNA = false;
+        for (auto candidate : rdnaGPUs) {
+            if (device_description.find(candidate)) {
+                isRDNA = true;
+                break;
             }
         }
-        else if (vendor.size() >= 28 && vendor.substr(0, 28) == "Advanced Micro Devices, Inc.") {
-            if (device.getInfo<CL_DEVICE_TYPE>() != CL_DEVICE_TYPE_GPU) {
-                /// \todo Is 6 a good value for the OpenCL CPU device?
-                // numThreadBlocksPerComputeUnit = ?;
-                simdWidth = 1;
-            }
-            else {
-                bool amdPostSdk2_4 = false;
-                // Default to 1 which will use the default kernels.
-                simdWidth = 1;
-                if (device.getInfo<CL_DEVICE_EXTENSIONS>().find("cl_amd_device_attribute_query") != string::npos) {
-                    // This attribute does not ensure that all queries are supported by the runtime so still have to
-                    // check for errors.
-                    try {
-                        // Must catch cl:Error as will fail if runtime does not support queries.
-
-                        cl_uint simdPerComputeUnit = device.getInfo<CL_DEVICE_SIMD_PER_COMPUTE_UNIT_AMD>();
-                        simdWidth = device.getInfo<CL_DEVICE_WAVEFRONT_WIDTH_AMD>();
-
-                        // If the GPU has multiple SIMDs per compute unit then it is uses the scalar instruction
-                        // set instead of the VLIW instruction set. It therefore needs more thread blocks per
-                        // compute unit to hide memory latency.
-                        if (simdPerComputeUnit > 1) {
-                            if (simdWidth == 32)
-                                numThreadBlocksPerComputeUnit = 6*simdPerComputeUnit; // Navi seems to like more thread blocks than older GPUs
-                            else
-                                numThreadBlocksPerComputeUnit = 4*simdPerComputeUnit;
-                        }
-
-                        // If the queries are supported then must be newer than SDK 2.4.
-                        amdPostSdk2_4 = true;
-                    }
-                    catch (cl::Error err) {
-                        // Runtime does not support the query so is unlikely to be the newer scalar GPU.
-                        // Stay with the default simdWidth and numThreadBlocksPerComputeUnit.
-                    }
-                }
-                // AMD APP SDK 2.4 has a performance problem with atomics. Enable the work around. This is fixed after SDK 2.4.
-                if (!amdPostSdk2_4)
-                    compilationDefines["AMD_ATOMIC_WORK_AROUND"] = "";
-            }
+        if (isRDNA) {
+            // 2 x 32-wide simds
+            numThreadBlocksPerComputeUnit = 6 * 2;
+        } else {
+            // 4 x 16-wide simds
+            numThreadBlocksPerComputeUnit = 4 * 4;
         }
-        else
-            simdWidth = 1;
+        #endif
+
         if (supports64BitGlobalAtomics)
             compilationDefines["SUPPORTS_64_BIT_ATOMICS"] = "";
         if (supportsDoublePrecision)
@@ -301,34 +205,7 @@ OpenCLContext::OpenCLContext(const System& system, int platformIndex, int device
         paddedNumAtoms = TileSize*((numAtoms+TileSize-1)/TileSize);
         numAtomBlocks = (paddedNumAtoms+(TileSize-1))/TileSize;
         numThreadBlocks = numThreadBlocksPerComputeUnit*device.getInfo<CL_DEVICE_MAX_COMPUTE_UNITS>();
-        if (useDoublePrecision) {
-            posq.initialize<mm_double4>(*this, paddedNumAtoms, "posq");
-            velm.initialize<mm_double4>(*this, paddedNumAtoms, "velm");
-            compilationDefines["USE_DOUBLE_PRECISION"] = "1";
-            compilationDefines["convert_real4"] = "convert_double4";
-            compilationDefines["make_real2"] = "make_double2";
-            compilationDefines["make_real3"] = "make_double3";
-            compilationDefines["make_real4"] = "make_double4";
-            compilationDefines["convert_mixed4"] = "convert_double4";
-            compilationDefines["make_mixed2"] = "make_double2";
-            compilationDefines["make_mixed3"] = "make_double3";
-            compilationDefines["make_mixed4"] = "make_double4";
-        }
-        else if (useMixedPrecision) {
-            posq.initialize<mm_float4>(*this, paddedNumAtoms, "posq");
-            posqCorrection.initialize<mm_float4>(*this, paddedNumAtoms, "posq");
-            velm.initialize<mm_double4>(*this, paddedNumAtoms, "velm");
-            compilationDefines["USE_MIXED_PRECISION"] = "1";
-            compilationDefines["convert_real4"] = "convert_float4";
-            compilationDefines["make_real2"] = "make_float2";
-            compilationDefines["make_real3"] = "make_float3";
-            compilationDefines["make_real4"] = "make_float4";
-            compilationDefines["convert_mixed4"] = "convert_double4";
-            compilationDefines["make_mixed2"] = "make_double2";
-            compilationDefines["make_mixed3"] = "make_double3";
-            compilationDefines["make_mixed4"] = "make_double4";
-        }
-        else {
+        {
             posq.initialize<mm_float4>(*this, paddedNumAtoms, "posq");
             velm.initialize<mm_float4>(*this, paddedNumAtoms, "velm");
             compilationDefines["convert_real4"] = "convert_float4";
@@ -357,65 +234,55 @@ OpenCLContext::OpenCLContext(const System& system, int platformIndex, int device
     // Create utility kernels that are used in multiple places.
 
     auto utilities = NS::TransferPtr(createProgram(OpenCLKernelSources::utilities));
-    clearBufferKernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "clearBuffer"));
-    clearTwoBuffersKernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "clearTwoBuffers"));
-    clearThreeBuffersKernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "clearThreeBuffers"));
-    clearFourBuffersKernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "clearFourBuffers"));
-    clearFiveBuffersKernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "clearFiveBuffers"));
-    clearSixBuffersKernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "clearSixBuffers"));
+    simdWidthKernel = "findSIMDWidth"
     reduceReal4Kernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "reduceReal4Buffer"));
     reduceForcesKernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "reduceForces"));
     reduceEnergyKernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "reduceEnergy"));
     setChargesKernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "setCharges"));
+    
+    // Compile dynamic library for `erf` and `erfc`.
 
     // Decide whether native_sqrt(), native_rsqrt(), and native_recip() are sufficiently accurate to use.
 
-    if (!useDoublePrecision) {
-        auto accuracyKernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "determineNativeAccuracy"));
-        OpenCLArray valuesArray(*this, 20, sizeof(mm_float8), "values");
-        vector<mm_float8> values(valuesArray.getSize());
-        float nextValue = 1e-4f;
-        for (auto& val : values) {
-            val.s0 = nextValue;
-            nextValue *= (float) M_PI;
-        }
-        valuesArray.upload(values);
-        accuracyKernel.setArg<MTL::Buffer>(0, valuesArray.getDeviceBuffer());
-        accuracyKernel.setArg<cl_int>(1, values.size());
-        executeKernel(accuracyKernel, values.size());
-        valuesArray.download(values);
-        double maxSqrtError = 0.0, maxRsqrtError = 0.0, maxRecipError = 0.0, maxExpError = 0.0, maxLogError = 0.0;
-        for (auto& val : values) {
-            double v = val.s0;
-            double correctSqrt = sqrt(v);
-            maxSqrtError = max(maxSqrtError, fabs(correctSqrt-val.s1)/correctSqrt);
-            maxRsqrtError = max(maxRsqrtError, fabs(1.0/correctSqrt-val.s2)*correctSqrt);
-            maxRecipError = max(maxRecipError, fabs(1.0/v-val.s3)/val.s3);
-            maxExpError = max(maxExpError, fabs(exp(v)-val.s4)/val.s4);
-            maxLogError = max(maxLogError, fabs(log(v)-val.s5)/val.s5);
-        }
-        compilationDefines["SQRT"] = (maxSqrtError < 1e-6) ? "native_sqrt" : "sqrt";
-        compilationDefines["RSQRT"] = (maxRsqrtError < 1e-6) ? "native_rsqrt" : "rsqrt";
-        compilationDefines["RECIP"] = (maxRecipError < 1e-6) ? "native_recip" : "1.0f/";
-        compilationDefines["EXP"] = (maxExpError < 1e-6) ? "native_exp" : "exp";
-        compilationDefines["LOG"] = (maxLogError < 1e-6) ? "native_log" : "log";
+    auto accuracyKernel = NS::TransferPtr(MTL::ComputePipelineState((utilities, "determineNativeAccuracy"));
+    OpenCLArray valuesArray(*this, 20, sizeof(mm_float8), "values");
+    vector<mm_float8> values(valuesArray.getSize());
+    float nextValue = 1e-4f;
+    for (auto& val : values) {
+        val.s0 = nextValue;
+        nextValue *= (float) M_PI;
     }
-    else {
-        compilationDefines["SQRT"] = "sqrt";
-        compilationDefines["RSQRT"] = "rsqrt";
-        compilationDefines["RECIP"] = "1.0/";
-        compilationDefines["EXP"] = "exp";
-        compilationDefines["LOG"] = "log";
+    valuesArray.upload(values);
+    // TODO: Fix this to use OpenCLKernel API instead of cl::Kernel API.
+    accuracyKernel.setArg<MTL::Buffer>(0, valuesArray.getDeviceBuffer());
+    accuracyKernel.setArg<cl_int>(1, values.size());
+    executeKernel(accuracyKernel, values.size());
+    valuesArray.download(values);
+    double maxSqrtError = 0.0, maxRsqrtError = 0.0, maxRecipError = 0.0, maxExpError = 0.0, maxLogError = 0.0;
+    for (auto& val : values) {
+        double v = val.s0;
+        double correctSqrt = sqrt(v);
+        maxSqrtError = max(maxSqrtError, fabs(correctSqrt-val.s1)/correctSqrt);
+        maxRsqrtError = max(maxRsqrtError, fabs(1.0/correctSqrt-val.s2)*correctSqrt);
+        maxRecipError = max(maxRecipError, fabs(1.0/v-val.s3)/val.s3);
+        maxExpError = max(maxExpError, fabs(exp(v)-val.s4)/val.s4);
+        maxLogError = max(maxLogError, fabs(log(v)-val.s5)/val.s5);
     }
-    compilationDefines["POW"] = "pow";
-    compilationDefines["COS"] = "cos";
-    compilationDefines["SIN"] = "sin";
-    compilationDefines["TAN"] = "tan";
-    compilationDefines["ACOS"] = "acos";
-    compilationDefines["ASIN"] = "asin";
-    compilationDefines["ATAN"] = "atan";
-    compilationDefines["ERF"] = "erf";
-    compilationDefines["ERFC"] = "erfc";
+    compilationDefines["SQRT"] = (maxSqrtError < 1e-6) ? "fast::sqrt" : "precise::sqrt";
+    compilationDefines["RSQRT"] = (maxRsqrtError < 1e-6) ? "fast::rsqrt" : "precise::rsqrt";
+    compilationDefines["RECIP"] = (maxRecipError < 1e-6) ? "fast::recip" : "precise::recip";
+    compilationDefines["EXP"] = (maxExpError < 1e-6) ? "fast::exp" : "precise::exp";
+    compilationDefines["LOG"] = (maxLogError < 1e-6) ? "fast::log" : "precise::log";
+    
+    compilationDefines["POW"] = "precise::pow";
+    compilationDefines["COS"] = "precise::cos";
+    compilationDefines["SIN"] = "precise::sin";
+    compilationDefines["TAN"] = "precise::tan";
+    compilationDefines["ACOS"] = "precise::acos";
+    compilationDefines["ASIN"] = "precise::asin";
+    compilationDefines["ATAN"] = "precise::atan";
+    compilationDefines["ERF"] = "__openmm_erf";
+    compilationDefines["ERFC"] = "__openmm_erfc";
 
     // Set defines for applying periodic boundary conditions.
 

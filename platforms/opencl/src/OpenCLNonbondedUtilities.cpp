@@ -59,22 +59,31 @@ OpenCLNonbondedUtilities::OpenCLNonbondedUtilities(OpenCLContext& context) : con
         blockSorter(NULL), pinnedCountBuffer(NULL), pinnedCountMemory(NULL), forceRebuildNeighborList(true), lastCutoff(0.0), groupFlags(0) {
     // Decide how many thread blocks and force buffers to use.
 
-    deviceIsCpu = (context.getDevice().getInfo<CL_DEVICE_TYPE>() == CL_DEVICE_TYPE_CPU);
-    if (deviceIsCpu) {
-        numForceThreadBlocks = context.getNumThreadBlocks();
-        forceThreadBlockSize = 1;
-    }
-    else if (context.getSIMDWidth() == 32) {
-            numForceThreadBlocks = 4*context.getDevice().getInfo<CL_DEVICE_MAX_COMPUTE_UNITS>();
-            forceThreadBlockSize = 256;
+    if (context.getSIMDWidth() == 32) {
+        #if defined(__aarch64__)
+        // TODO: Profile whether to change this number. M1 technically supports
+        // 12=3072/256 threadgroups, but we want to stay conservative. Some
+        // unrelated work showed 88 simds (11 threadgroups) being optimal, but
+        // register pressure might mean we're oversubscribing.
+        //
+        // We must assert that every compute pipeline supports 1024 threads per
+        // threadgroup (2048 per core), otherwise this is too high.
+        int64_t multiplier = 8;
+        #else
+        int64_t multiplier = 4;
+        #endif
+        numForceThreadBlocks = multiplier*context.getInfoDevice().getInfo<CL_DEVICE_MAX_COMPUTE_UNITS>();
+        forceThreadBlockSize = 256;
     }
     else {
         numForceThreadBlocks = context.getNumThreadBlocks();
         forceThreadBlockSize = (context.getSIMDWidth() >= 32 ? OpenCLContext::ThreadBlockSize : 32);
     }
-    pinnedCountBuffer = NS::TransferPtr(MTL::Buffer(context.getContext(), CL_MEM_ALLOC_HOST_PTR, sizeof(unsigned int)));
-    pinnedCountMemory = (unsigned int*) context.getQueue().enqueueMapBuffer(*pinnedCountBuffer, CL_TRUE, CL_MAP_READ, 0, sizeof(int));
-    setKernelSource(deviceIsCpu ? OpenCLKernelSources::nonbonded_cpu : OpenCLKernelSources::nonbonded);
+    pinnedCountBuffer = new OpenCLArray();
+    pinnedCountBuffer.initialize<unsigned int>(
+        context, 1, "Pinned Count Buffer", MTL::ResourceStorageModeManaged);
+    pinnedCountMemory = pinnedCountBuffer->getDeviceBuffer()->contents();
+    setKernelSource(OpenCLKernelSources::nonbonded);
 }
 
 OpenCLNonbondedUtilities::~OpenCLNonbondedUtilities() {
