@@ -27,13 +27,22 @@ void twoSum(thread float &sum, thread float &c) {
 // Each pass divides the buffer by ~1000. Repeat this multiple times, until
 // the size reaches 1. For the final result, you don't need to add the
 // compensation. The larger part contains the closest FP32 number to the energy.
-__kernel void reduceEnergyPass(GLOBAL const float2* energyBuffer, GLOBAL float2* result, int bufferSize, DISPATCH_ARGUMENTS) {
+//
+// Aim to just overload each workgroup by a factor of ~2-4. This makes the bulk
+// summation stage comparable to the reduction stage, while decreasing the
+// number of utilized GPU cores. This kernel is flexible; you could easily
+// assign all work to a single threadgroup (and observe the performance delta).
+__kernel void reduceEnergyPass(GLOBAL const float2* energyBuffer, GLOBAL float2* result, int bufferSize, int elementsPerWorkGroup, DISPATCH_ARGUMENTS) {
     float sum = 0;
     float c = 0;
-    if (GLOBAL_ID < bufferSize) {
-        float2 value = energyBuffer[GLOBAL_ID];
-        sum = value[0];
-        c = value[1];
+    int groupStart = GROUP_ID * elementsPerWorkGroup;
+    int groupEnd = min(groupStart + elementsPerWorkGroup, bufferSize);
+    for (int index = groupStart + LOCAL_ID; index < groupEnd; ++index) {
+        float2 value = energyBuffer[index];
+        float other_sum = value[0];
+        float other_c = value[1];
+        kahanSum(other_sum, sum, c, abs(sum) >= abs(other_sum))
+        kahanSum(other_c, sum, c, /*sumLarger=*/true);
     }
     
     // Although threadgroup bandwidth might not be a significant bottleneck,
